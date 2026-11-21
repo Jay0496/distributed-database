@@ -124,10 +124,25 @@ class RaftNode:
     def _run(self) -> None:
         self._reset_election_timer()
         while self._running:
-            time.sleep(0.01)
+            if self.state == self.LEADER:
+                time.sleep(self.heartbeat_interval)
+            else:
+                now = time.monotonic()
+                if now >= self.election_deadline:
+                    self._start_election()
+                else:
+                    wait = min(0.01, self.election_deadline - now)
+                    time.sleep(wait if wait > 0 else 0.001)
 
     def _start_election(self) -> None:
-        pass
+        with self._lock:
+            if self.state == self.LEADER:
+                return
+            self.state = self.CANDIDATE
+            self.current_term += 1
+            self.voted_for = self.node_id
+            self._leader_id = None
+            self._reset_election_timer()
 
     def _send_heartbeats(self) -> None:
         pass

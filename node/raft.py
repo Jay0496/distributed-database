@@ -260,7 +260,52 @@ class RaftNode:
                 else:
                     self.log.append(e)
 
+            # advance commit index
+            if leader_commit is not None:
+                new_commit = min(int(leader_commit), self.last_log_index())
+                if new_commit > self.commit_index:
+                    self.commit_index = new_commit
+                    self._apply_committed_locked()
+
             return self.current_term, True
+
+    def set_apply_callback(self, fn) -> None:
+        with self._lock:
+            self.apply_fn = fn
+            self._apply_committed_locked()
+
+    def _apply_committed_locked(self) -> None:
+        while self.last_applied < self.commit_index and self.last_applied + 1 < len(self.log):
+            self.last_applied += 1
+            if self.last_applied < len(self.log):
+                entry = self.log[self.last_applied]
+                if self.apply_fn is not None:
+                    try:
+                        self.apply_fn(entry)
+                    except Exception:
+                        pass
+
+    def _advance_commit_index(self) -> None:
+        with self._lock:
+            self._advance_commit_index_locked()
+
+    def _advance_commit_index_locked(self) -> None:
+        if self.state != self.LEADER:
+            return
+        majority = (len(self.peers) + 1) // 2 + 1
+        for i in range(self.last_log_index(), self.commit_index, -1):
+            if i <= 0:
+                break
+            if self._term_at(i) != self.current_term:
+                continue
+            count = 1
+            for p in self.peers:
+                if self.match_index.get(p, 0) >= i:
+                    count += 1
+            if count >= majority:
+                self.commit_index = i
+                self._apply_committed_locked()
+                break
 
     def _reset_election_timer(self) -> None:
         timeout = random.uniform(*self.election_timeout_range)

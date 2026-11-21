@@ -73,6 +73,25 @@ class RS32Engine(RedundancyEngine):
         return padded_payload[4:4 + length]
 
 
+class ReplicationEngine(RedundancyEngine):
+    """5 full copies of the data."""
+
+    NSHARDS = 5
+
+    def required(self) -> int:
+        return 1
+
+    def encode(self, data: bytes) -> List[bytes]:
+        data = bytes(data)
+        return [bytes(data) for _ in range(self.NSHARDS)]
+
+    def decode(self, shards: Sequence[Optional[bytes]]) -> bytes:
+        for shard in shards:
+            if shard is not None:
+                return bytes(shard)
+        return b""
+
+
 def checksum(data: bytes) -> str:
     return hashlib.sha256(bytes(data)).hexdigest()
 
@@ -86,6 +105,7 @@ checksum_sha256 = checksum
 __all__ = [
     "RedundancyEngine",
     "RS32Engine",
+    "ReplicationEngine",
     "checksum",
     "sha256_hexdigest",
     "sha256_checksum",

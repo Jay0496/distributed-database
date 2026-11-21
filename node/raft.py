@@ -166,6 +166,55 @@ class RaftNode:
             self.current_term += 1
             self.voted_for = self.node_id
             self._leader_id = None
+            term = self.current_term
+            self._reset_election_timer()
+
+        last_idx = self.last_log_index()
+        last_term = self.last_log_term()
+
+        req = {
+            "term": term,
+            "candidate_id": self.node_id,
+            "last_log_index": last_idx,
+            "last_log_term": last_term,
+        }
+
+        results = []
+        rlock = threading.Lock()
+
+        def worker(peer):
+            try:
+                pt, granted = self.transport.request_vote(peer, dict(req))
+                with rlock:
+                    results.append((peer, pt, granted))
+            except Exception:
+                with rlock:
+                    results.append((peer, term, False))
+
+        threads = []
+        for p in self.peers:
+            t = threading.Thread(target=worker, args=(p,), daemon=True)
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join(timeout=0.15)
+
+        with self._lock:
+            if self.state != self.CANDIDATE or self.current_term != term:
+                return
+            for peer, pt, granted in results:
+                if pt > self.current_term:
+                    self.current_term = pt
+                    self.voted_for = None
+                    self.state = self.FOLLOWER
+                    self._leader_id = None
+                    self._reset_election_timer()
+                    return
+            votes = 1 + sum(1 for _, _, g in results if g)
+            majority = (len(self.peers) + 1) // 2 + 1
+            if votes >= majority:
+                self.state = self.LEADER
+                self._leader_id = self.node_id
             self._reset_election_timer()
 
     def _send_heartbeats(self) -> None:

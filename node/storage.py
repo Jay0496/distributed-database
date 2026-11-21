@@ -1,9 +1,10 @@
 """Per-node durable SQLite store."""
 
+import json
 import os
 import sqlite3
 import threading
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 _SCHEMA = """
@@ -77,3 +78,61 @@ class Storage:
                 (key, value),
             )
             self._conn.commit()
+
+    # ---- raft log ----
+    def append_log(self, term: int, command: bytes) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COALESCE(MAX(idx), 0) FROM raft_log"
+            )
+            idx = int(cur.fetchone()[0]) + 1
+            self._conn.execute(
+                "INSERT INTO raft_log (idx, term, command) VALUES (?, ?, ?)",
+                (idx, term, command),
+            )
+            self._conn.commit()
+            return idx
+
+    def get_log(self, idx: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT idx, term, command FROM raft_log WHERE idx = ?", (idx,)
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return {"idx": row[0], "term": row[1], "command": bytes(row[2]) if row[2] is not None else b""}
+
+    def get_log_from(self, idx: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT idx, term, command FROM raft_log WHERE idx >= ? ORDER BY idx ASC",
+                (idx,),
+            )
+            out = []
+            for row in cur.fetchall():
+                out.append(
+                    {
+                        "idx": row[0],
+                        "term": row[1],
+                        "command": bytes(row[2]) if row[2] is not None else b"",
+                    }
+                )
+            return out
+
+    def truncate_log(self, idx: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM raft_log WHERE idx >= ?", (idx,)
+            )
+            self._conn.commit()
+
+    def last_log(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT idx, term, command FROM raft_log ORDER BY idx DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return {"idx": row[0], "term": row[1], "command": bytes(row[2]) if row[2] is not None else b""}

@@ -149,6 +149,7 @@ class RaftNode:
         self._reset_election_timer()
         while self._running:
             if self.state == self.LEADER:
+                self._send_heartbeats()
                 time.sleep(self.heartbeat_interval)
             else:
                 now = time.monotonic()
@@ -217,8 +218,39 @@ class RaftNode:
                 self._leader_id = self.node_id
             self._reset_election_timer()
 
+        if self.is_leader():
+            self._send_heartbeats()
+
     def _send_heartbeats(self) -> None:
-        pass
+        with self._lock:
+            term = self.current_term
+            leader = self.node_id
+            last_idx = self.last_log_index()
+            last_term = self.last_log_term()
+            commit = self.commit_index
+        for p in self.peers:
+            try:
+                pt, success = self.transport.append_entries(
+                    p,
+                    {
+                        "term": term,
+                        "leader_id": leader,
+                        "prev_log_index": last_idx,
+                        "prev_log_term": last_term,
+                        "entries": [],
+                        "leader_commit": commit,
+                    },
+                )
+                if pt is not None and pt > term:
+                    with self._lock:
+                        if pt > self.current_term:
+                            self.current_term = pt
+                            self.voted_for = None
+                            self.state = self.FOLLOWER
+                            self._leader_id = None
+                            self._reset_election_timer()
+            except Exception:
+                pass
 
 
 class DirectTransport:

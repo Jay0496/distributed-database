@@ -183,3 +183,46 @@ class Storage:
         with self._lock:
             cur = self._conn.execute("SELECT key FROM meta ORDER BY key ASC")
             return [r[0] for r in cur.fetchall()]
+
+    # ---- shards ----
+    def store_shard(self, key: str, idx: int, version: int, blob: bytes) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO shards (key, idx, version, blob) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(key, idx) DO UPDATE SET "
+                "version = excluded.version, blob = excluded.blob",
+                (key, idx, version, blob),
+            )
+            self._conn.commit()
+
+    def fetch_shard(self, key: str, idx: int) -> Optional[bytes]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT blob FROM shards WHERE key = ? AND idx = ?", (key, idx)
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return bytes(row[0]) if row[0] is not None else b""
+
+    def has_shard(self, key: str, idx: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT 1 FROM shards WHERE key = ? AND idx = ?", (key, idx)
+            )
+            return cur.fetchone() is not None
+
+    def delete_shard(self, key: str, idx: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM shards WHERE key = ? AND idx = ?", (key, idx)
+            )
+            self._conn.commit()
+
+    def list_for_node(self, node_index: int) -> List[str]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT DISTINCT key FROM shards WHERE idx = ? ORDER BY key ASC",
+                (node_index,),
+            )
+            return [r[0] for r in cur.fetchall()]

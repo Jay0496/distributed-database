@@ -2,3 +2,5 @@ grpcio
 grpcio-tools
 protobuf
 reedsolo
+pytest
+pytest

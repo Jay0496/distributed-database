@@ -112,7 +112,31 @@ class RaftNode:
             return self._leader_id
 
     def handle_request_vote(self, term, candidate_id, last_log_index, last_log_term):
-        return self.current_term, False
+        with self._lock:
+            if term > self.current_term:
+                self.current_term = term
+                self.voted_for = None
+                self.state = self.FOLLOWER
+                self._leader_id = None
+                self._reset_election_timer()
+
+            if term < self.current_term:
+                return self.current_term, False
+
+            def log_ok():
+                my_term = self.last_log_term()
+                my_idx = self.last_log_index()
+                if last_log_term != my_term:
+                    return last_log_term > my_term
+                return last_log_index >= my_idx
+
+            granted = False
+            if (self.voted_for is None or self.voted_for == candidate_id) and log_ok():
+                self.voted_for = candidate_id
+                granted = True
+                self._reset_election_timer()
+
+            return self.current_term, granted
 
     def handle_append_entries(self, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit):
         return self.current_term, False

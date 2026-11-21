@@ -1,9 +1,17 @@
-"""Raft leader election (no log replication yet)."""
+"""Raft consensus node (election + log replication)."""
 
 import random
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
+
+
+@dataclass
+class RaftLogEntry:
+    term: int
+    index: int
+    command: bytes = b""
 
 
 _NODE_REGISTRY: Dict[str, "RaftNode"] = {}
@@ -38,8 +46,14 @@ class RaftNode:
         self.current_term = 0
         self.voted_for: Optional[str] = None
         self.commit_index = 0
+        self.last_applied = 0
         self.state = self.FOLLOWER
         self._leader_id: Optional[str] = None
+
+        self.log: List[RaftLogEntry] = [RaftLogEntry(term=0, index=0, command=b"")]
+        self.apply_fn: Optional[Callable[[RaftLogEntry], None]] = None
+        self.next_index: Dict[str, int] = {}
+        self.match_index: Dict[str, int] = {}
 
         self._lock = threading.RLock()
         self._running = False
@@ -84,24 +98,60 @@ class RaftNode:
             pass
 
     def last_log_index(self) -> int:
-        if self.storage is not None:
-            try:
-                ll = self.storage.last_log()
-                if ll is not None:
-                    return int(ll["idx"])
-            except Exception:
-                pass
-        return getattr(self, "_last_log_index", 0)
+        if not self.log:
+            return 0
+        return self.log[-1].index
 
     def last_log_term(self) -> int:
-        if self.storage is not None:
-            try:
-                ll = self.storage.last_log()
-                if ll is not None:
-                    return int(ll["term"])
-            except Exception:
-                pass
-        return getattr(self, "_last_log_term", 0)
+        if not self.log:
+            return 0
+        return self.log[-1].term
+
+    def _term_at(self, idx: int) -> int:
+        if 0 <= idx < len(self.log):
+            return self.log[idx].term
+        return 0
+
+    def _entry_from(self, raw: Any) -> RaftLogEntry:
+        if isinstance(raw, RaftLogEntry):
+            cmd = raw.command
+            if isinstance(cmd, str):
+                cmd = cmd.encode()
+            elif not isinstance(cmd, (bytes, bytearray)):
+                cmd = bytes(cmd) if cmd is not None else b""
+            return RaftLogEntry(term=int(raw.term), index=int(raw.index), command=bytes(cmd))
+        if isinstance(raw, dict):
+            cmd = raw.get("command", b"")
+            if isinstance(cmd, str):
+                cmd = cmd.encode()
+            elif not isinstance(cmd, (bytes, bytearray)):
+                cmd = bytes(cmd) if cmd is not None else b""
+            return RaftLogEntry(
+                term=int(raw.get("term", 0)),
+                index=int(raw.get("index", 0)),
+                command=bytes(cmd),
+            )
+        if isinstance(raw, (tuple, list)):
+            if len(raw) >= 3:
+                cmd = raw[2]
+                if isinstance(cmd, str):
+                    cmd = cmd.encode()
+                elif not isinstance(cmd, (bytes, bytearray)):
+                    cmd = bytes(cmd) if cmd is not None else b""
+                return RaftLogEntry(term=int(raw[0]), index=int(raw[1]), command=bytes(cmd))
+            if len(raw) == 2:
+                cmd = raw[1]
+                if isinstance(cmd, str):
+                    cmd = cmd.encode()
+                elif not isinstance(cmd, (bytes, bytearray)):
+                    cmd = bytes(cmd) if cmd is not None else b""
+                return RaftLogEntry(term=int(raw[0]), index=self.last_log_index() + 1, command=bytes(cmd))
+        cmd = raw
+        if isinstance(cmd, str):
+            cmd = cmd.encode()
+        elif not isinstance(cmd, (bytes, bytearray)):
+            cmd = bytes(cmd) if cmd is not None else b""
+        return RaftLogEntry(term=self.current_term, index=self.last_log_index() + 1, command=bytes(cmd))
 
     def start(self) -> None:
         if self._running:
@@ -170,6 +220,9 @@ class RaftNode:
         self, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit
     ):
         with self._lock:
+            if term < self.current_term:
+                return self.current_term, False
+
             if term > self.current_term:
                 self.current_term = term
                 self.voted_for = None
@@ -178,18 +231,34 @@ class RaftNode:
                 self._persist_term()
                 self._persist_voted_for()
 
-            if term < self.current_term:
-                return self.current_term, False
-
             self._leader_id = leader_id
             self.state = self.FOLLOWER
             self._reset_election_timer()
 
-            try:
-                if leader_commit is not None and leader_commit > self.commit_index:
-                    self.commit_index = min(leader_commit, self.last_log_index())
-            except Exception:
-                pass
+            prev_log_index = 0 if prev_log_index is None else int(prev_log_index)
+            prev_log_term = 0 if prev_log_term is None else int(prev_log_term)
+
+            # validation
+            if prev_log_index >= len(self.log):
+                return self.current_term, False
+            if prev_log_index >= 0 and self._term_at(prev_log_index) != prev_log_term:
+                return self.current_term, False
+
+            # truncate conflicting suffix
+            if prev_log_index + 1 < len(self.log):
+                del self.log[prev_log_index + 1 :]
+
+            # append entries not already present
+            for raw in (entries or []):
+                e = self._entry_from(raw)
+                if e.index <= 0:
+                    continue
+                if e.index <= self.last_log_index():
+                    if self._term_at(e.index) != e.term:
+                        del self.log[e.index :]
+                        self.log.append(e)
+                else:
+                    self.log.append(e)
 
             return self.current_term, True
 

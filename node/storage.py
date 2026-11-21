@@ -1,9 +1,9 @@
-"""Per-node durable SQLite store (scaffold: connection + schema)."""
+"""Per-node durable SQLite store."""
 
 import os
 import sqlite3
 import threading
-from typing import Any
+from typing import Optional
 
 
 _SCHEMA = """
@@ -59,4 +59,21 @@ class Storage:
             except sqlite3.Error:
                 pass
             self._conn.close()
-"""
+
+    # ---- raft state ----
+    def get_raft_state(self, key: str) -> Optional[str]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT value FROM raft_state WHERE key = ?", (key,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    def set_raft_state(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO raft_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            self._conn.commit()

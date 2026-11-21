@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+
 _NODE_REGISTRY: Dict[str, "RaftNode"] = {}
 
 
@@ -42,25 +43,45 @@ class RaftNode:
 
         self._lock = threading.RLock()
         self._running = False
+        self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.election_deadline = 0.0
 
-        if self.storage is not None:
-            try:
-                v = self.storage.get_raft_state("current_term")
-                if v is not None:
-                    self.current_term = int(v)
-            except Exception:
-                pass
+        self._load_state()
 
     def _load_state(self) -> None:
-        pass
+        if self.storage is None:
+            return
+        try:
+            v = self.storage.get_raft_state("current_term")
+            if v is not None:
+                self.current_term = int(v)
+        except Exception:
+            pass
+        try:
+            v = self.storage.get_raft_state("voted_for")
+            if v is not None and v not in ("", "None", None):
+                self.voted_for = v
+        except Exception:
+            pass
 
     def _persist_term(self) -> None:
-        pass
+        if self.storage is None:
+            return
+        try:
+            self.storage.set_raft_state("current_term", str(self.current_term))
+        except Exception:
+            pass
 
     def _persist_voted_for(self) -> None:
-        pass
+        if self.storage is None:
+            return
+        try:
+            self.storage.set_raft_state(
+                "voted_for", self.voted_for if self.voted_for is not None else ""
+            )
+        except Exception:
+            pass
 
     def last_log_index(self) -> int:
         if self.storage is not None:
@@ -70,7 +91,7 @@ class RaftNode:
                     return int(ll["idx"])
             except Exception:
                 pass
-        return 0
+        return getattr(self, "_last_log_index", 0)
 
     def last_log_term(self) -> int:
         if self.storage is not None:
@@ -80,18 +101,20 @@ class RaftNode:
                     return int(ll["term"])
             except Exception:
                 pass
-        return 0
+        return getattr(self, "_last_log_term", 0)
 
     def start(self) -> None:
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
         self._reset_election_timer()
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"raft-{self.node_id}")
         self._thread.start()
 
     def stop(self) -> None:
         self._running = False
+        self._stop_event.set()
         t = self._thread
         if t is not None and t.is_alive():
             t.join(timeout=2.0)
@@ -111,13 +134,17 @@ class RaftNode:
                 return self.node_id
             return self._leader_id
 
-    def handle_request_vote(self, term, candidate_id, last_log_index, last_log_term):
+    def handle_request_vote(
+        self, term, candidate_id, last_log_index, last_log_term
+    ):
         with self._lock:
             if term > self.current_term:
                 self.current_term = term
                 self.voted_for = None
                 self.state = self.FOLLOWER
                 self._leader_id = None
+                self._persist_term()
+                self._persist_voted_for()
                 self._reset_election_timer()
 
             if term < self.current_term:
@@ -134,12 +161,37 @@ class RaftNode:
             if (self.voted_for is None or self.voted_for == candidate_id) and log_ok():
                 self.voted_for = candidate_id
                 granted = True
+                self._persist_voted_for()
                 self._reset_election_timer()
 
             return self.current_term, granted
 
-    def handle_append_entries(self, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit):
-        return self.current_term, False
+    def handle_append_entries(
+        self, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit
+    ):
+        with self._lock:
+            if term > self.current_term:
+                self.current_term = term
+                self.voted_for = None
+                self.state = self.FOLLOWER
+                self._leader_id = None
+                self._persist_term()
+                self._persist_voted_for()
+
+            if term < self.current_term:
+                return self.current_term, False
+
+            self._leader_id = leader_id
+            self.state = self.FOLLOWER
+            self._reset_election_timer()
+
+            try:
+                if leader_commit is not None and leader_commit > self.commit_index:
+                    self.commit_index = min(leader_commit, self.last_log_index())
+            except Exception:
+                pass
+
+            return self.current_term, True
 
     def _reset_election_timer(self) -> None:
         timeout = random.uniform(*self.election_timeout_range)
@@ -150,7 +202,10 @@ class RaftNode:
         while self._running:
             if self.state == self.LEADER:
                 self._send_heartbeats()
-                time.sleep(self.heartbeat_interval)
+                slept = 0.0
+                while slept < self.heartbeat_interval and self._running:
+                    time.sleep(min(0.01, self.heartbeat_interval - slept))
+                    slept += 0.01
             else:
                 now = time.monotonic()
                 if now >= self.election_deadline:
@@ -168,6 +223,8 @@ class RaftNode:
             self.voted_for = self.node_id
             self._leader_id = None
             term = self.current_term
+            self._persist_term()
+            self._persist_voted_for()
             self._reset_election_timer()
 
         last_idx = self.last_log_index()
@@ -209,6 +266,8 @@ class RaftNode:
                     self.voted_for = None
                     self.state = self.FOLLOWER
                     self._leader_id = None
+                    self._persist_term()
+                    self._persist_voted_for()
                     self._reset_election_timer()
                     return
             votes = 1 + sum(1 for _, _, g in results if g)
@@ -248,6 +307,8 @@ class RaftNode:
                             self.voted_for = None
                             self.state = self.FOLLOWER
                             self._leader_id = None
+                            self._persist_term()
+                            self._persist_voted_for()
                             self._reset_election_timer()
             except Exception:
                 pass

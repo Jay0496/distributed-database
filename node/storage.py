@@ -136,3 +136,50 @@ class Storage:
             if row is None:
                 return None
             return {"idx": row[0], "term": row[1], "command": bytes(row[2]) if row[2] is not None else b""}
+
+    # ---- meta ----
+    def upsert_meta(
+        self,
+        key: str,
+        mode: str,
+        version: int,
+        size: int,
+        checksum: str,
+        owners: List[str],
+    ) -> None:
+        owners_json = json.dumps(owners)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO meta (key, mode, version, size, checksum, owners) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET "
+                "mode = excluded.mode, version = excluded.version, "
+                "size = excluded.size, checksum = excluded.checksum, "
+                "owners = excluded.owners",
+                (key, mode, version, size, checksum, owners_json),
+            )
+            self._conn.commit()
+
+    def get_meta(self, key: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT key, mode, version, size, checksum, owners FROM meta WHERE key = ?",
+                (key,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            owners = json.loads(row[5]) if row[5] is not None else []
+            return {
+                "key": row[0],
+                "mode": row[1],
+                "version": row[2],
+                "size": row[3],
+                "checksum": row[4],
+                "owners": owners,
+            }
+
+    def list_meta_keys(self) -> List[str]:
+        with self._lock:
+            cur = self._conn.execute("SELECT key FROM meta ORDER BY key ASC")
+            return [r[0] for r in cur.fetchall()]

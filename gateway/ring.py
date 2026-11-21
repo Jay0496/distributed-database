@@ -1,5 +1,6 @@
 """Consistent hash ring with virtual nodes for key -> node routing."""
 
+import bisect
 import hashlib
 from typing import List
 
@@ -34,6 +35,15 @@ class ConsistentHashRing:
             del self._ring[pos]
         self._nodes.discard(node_id)
         self._sorted = sorted(self._ring)
+
+    def get_node(self, key) -> str:
+        if not self._ring:
+            raise ValueError("consistent hash ring is empty")
+        pos = self._hash(key)
+        idx = bisect.bisect_left(self._sorted, pos)
+        if idx == len(self._sorted):
+            idx = 0
+        return self._ring[self._sorted[idx]]
 
     def nodes(self) -> List[str]:
         return sorted(self._nodes)

@@ -2,65 +2,17 @@ import os
 import sys
 import time
 
+import pytest
+
 try:
     import gen.kv_pb2 as kv_pb2
-    from node.raft import DirectTransport, RaftNode
-    from node.server import NodeService
-    from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     import gen.kv_pb2 as kv_pb2  # type: ignore
-    from node.raft import DirectTransport, RaftNode  # type: ignore
-    from node.server import NodeService  # type: ignore
-    from node.storage import Storage  # type: ignore
 
 
-def _make_cluster(tmp_path):
-    ids = [f"node{i}" for i in range(5)]
-    storages = {}
-    nodes = {}
-    services = {}
-    for nid in ids:
-        st = Storage(str(tmp_path / f"{nid}.db"))
-        storages[nid] = st
-        raft = RaftNode(nid, [x for x in ids if x != nid], storage=st)
-        nodes[nid] = raft
-        services[nid] = NodeService(nid, st, raft)
-    transport = DirectTransport(nodes)
-    for nd in nodes.values():
-        nd.transport = transport
-    for nd in nodes.values():
-        nd.start()
-    deadline = time.monotonic() + 5.0
-    leader_id = None
-    while time.monotonic() < deadline:
-        for nid, nd in nodes.items():
-            if nd.is_leader():
-                leader_id = nid
-                break
-        if leader_id:
-            break
-        time.sleep(0.05)
-    assert leader_id is not None, "no leader elected"
-    time.sleep(0.5)
-    return ids, nodes, storages, services, leader_id
-
-
-def _teardown(nodes, storages):
-    for nd in nodes.values():
-        try:
-            nd.stop()
-        except Exception:
-            pass
-    for st in storages.values():
-        try:
-            st.close()
-        except Exception:
-            pass
-
-
-def test_read_repair_restores_corrupt_shard(tmp_path):
-    ids, nodes, storages, services, lid = _make_cluster(tmp_path)
+def test_read_repair_restores_corrupt_shard(cluster):
+    ids, nodes, storages, services, lid, transport = cluster
     try:
         svc = services[lid]
         resp = None
@@ -97,11 +49,11 @@ def test_read_repair_restores_corrupt_shard(tmp_path):
             time.sleep(0.05)
         assert storages[target].fetch_shard("k", idx) == canonical[idx]
     finally:
-        _teardown(nodes, storages)
+        pass
 
 
-def test_read_repair_log_line(tmp_path, capsys):
-    ids, nodes, storages, services, lid = _make_cluster(tmp_path)
+def test_read_repair_log_line(cluster, capsys):
+    ids, nodes, storages, services, lid, transport = cluster
     try:
         svc = services[lid]
         resp = None
@@ -131,4 +83,4 @@ def test_read_repair_log_line(tmp_path, capsys):
         captured = capsys.readouterr()
         assert "read-repair: rebuilt shard 0" in captured.out
     finally:
-        _teardown(nodes, storages)
+        pass

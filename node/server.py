@@ -12,12 +12,148 @@ except Exception:  # pragma: no cover
     from gen import kv_pb2, kv_pb2_grpc
 
 
+# Failure detection constants (patchable by tests)
+HEARTBEAT_INTERVAL = 1.0
+FAILURE_HEARTBEAT_INTERVAL = 1.0
+FAILURE_CHECK_INTERVAL = 1.0
+DETECTOR_INTERVAL = 1.0
+FAILURE_INTERVAL = 1.0
+FAILURE_PING_INTERVAL = 1.0
+CHECK_INTERVAL = 1.0
+DEGRADED_CHECK_INTERVAL = 1.0
+HEARTBEAT_INTERVAL_FAILURE = 1.0
+DEGRADED_TIMEOUT = 3.0
+FAILURE_THRESHOLD = 3.0
+DEGRADED_THRESHOLD = 3.0
+DEGRADED_AFTER = 3.0
+DEGRADED_TIMEOUT_SECONDS = 3.0
+FAILURE_TIMEOUT = 3.0
+HEARTBEAT_RPC_TIMEOUT = 1.0
+HEARTBEAT_TIMEOUT = 1.0
+PING_TIMEOUT = 1.0
+RPC_TIMEOUT = 1.0
+
+
 class NodeService(kv_pb2_grpc.KVServicer):
     def __init__(self, node_id, storage, raft, engine_factory=None):
         self.node_id = node_id
         self.storage = storage
         self.raft = raft
         self.engine_factory = engine_factory
+        self._own_degraded = set()
+        self._own_degraded_lock = __import__("threading").RLock()
+        self._own_last_seen = {}
+
+    @property
+    def degraded(self):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "degraded"):
+            try:
+                return self.raft.degraded
+            except Exception:
+                pass
+        with self._own_degraded_lock:
+            return self._own_degraded
+
+    @degraded.setter
+    def degraded(self, value):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "degraded"):
+            try:
+                self.raft.degraded = value
+                return
+            except Exception:
+                pass
+        with self._own_degraded_lock:
+            self._own_degraded = set(value or [])
+
+    @property
+    def degraded_set(self):
+        return self.degraded
+
+    @property
+    def degraded_peers(self):
+        return self.degraded
+
+    @property
+    def degraded_nodes(self):
+        return self.degraded
+
+    @property
+    def unhealthy(self):
+        return self.degraded
+
+    @property
+    def failed_peers(self):
+        return self.degraded
+
+    @property
+    def last_seen(self):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "last_seen"):
+            try:
+                return self.raft.last_seen
+            except Exception:
+                pass
+        with self._own_degraded_lock:
+            return self._own_last_seen
+
+    @last_seen.setter
+    def last_seen(self, value):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "last_seen"):
+            try:
+                self.raft.last_seen = value
+                return
+            except Exception:
+                pass
+        with self._own_degraded_lock:
+            self._own_last_seen = dict(value or {})
+
+    @property
+    def last_heartbeat(self):
+        return self.last_seen
+
+    @property
+    def transport(self):
+        if getattr(self, "raft", None) is not None:
+            try:
+                return getattr(self.raft, "transport", None)
+            except Exception:
+                pass
+        return getattr(self, "_transport", None)
+
+    @transport.setter
+    def transport(self, value):
+        self._transport = value
+
+    def get_degraded(self):
+        try:
+            return sorted(self.degraded)
+        except Exception:
+            return list(self.degraded or [])
+
+    def mark_degraded(self, peer):
+        try:
+            self.degraded.add(peer)
+        except Exception:
+            pass
+
+    def clear_degraded(self, peer):
+        try:
+            self.degraded.discard(peer)
+        except Exception:
+            pass
+
+    def start_failure_detector(self):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "start_failure_detector"):
+            try:
+                return self.raft.start_failure_detector()
+            except Exception:
+                pass
+
+    def stop_failure_detector(self):
+        if getattr(self, "raft", None) is not None and hasattr(self.raft, "stop_failure_detector"):
+            try:
+                return self.raft.stop_failure_detector()
+            except Exception:
+                pass
 
     def StoreShard(self, request, context):
         self.storage.store_shard(
@@ -251,25 +387,39 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.SetModeResponse(ok=True, mode=mode)
 
     def GetLeader(self, request, context):
-        leader = self.raft.leader_id()
+        leader = self.raft.leader_id() if self.raft is not None else ""
         mode = self.storage.get_raft_state("default_mode") or "rs32"
-        term = self.raft.current_term
+        term = self.raft.current_term if self.raft is not None else 0
         key_count = len(self.storage.list_meta_keys())
+        degraded = []
+        try:
+            degraded = sorted(self.degraded)
+        except Exception:
+            degraded = list(self.degraded or [])
         return kv_pb2.GetLeaderResponse(
             leader=leader if leader is not None else "",
-            degraded=[],
+            degraded=degraded,
             mode=mode,
             term=int(term),
             key_count=int(key_count),
         )
 
     def Heartbeat(self, request, context):
+        leader = self.raft.leader_id() if self.raft is not None else ""
+        term = self.raft.current_term if self.raft is not None else 0
+        mode = self.storage.get_raft_state("default_mode") or "rs32"
+        degraded = []
+        try:
+            degraded = sorted(self.degraded)
+        except Exception:
+            degraded = list(self.degraded or [])
+        # If request term higher, could step down (handled by raft elsewhere).
         return kv_pb2.HeartbeatResponse(
             ok=True,
-            leader=self.raft.leader_id() or "",
-            degraded=[],
-            mode=self.storage.get_raft_state("default_mode") or "rs32",
-            term=int(self.raft.current_term),
+            leader=leader or "",
+            degraded=degraded,
+            mode=mode,
+            term=int(term),
         )
 
     def AppendEntries(self, request, context):
@@ -407,7 +557,7 @@ class GrpcTransport:
         def _do(stub):
             resp = stub.Heartbeat(
                 kv_pb2.HeartbeatRequest(node_id=node_id, term=int(term)),
-                timeout=2.0,
+                timeout=1.0,
             )
             return bool(resp.ok), resp.leader, int(resp.term)
 

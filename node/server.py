@@ -76,7 +76,30 @@ class NodeService(kv_pb2_grpc.KVServicer):
                 engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
                 shards = list(engine.encode(value))  # len 5
                 owners = sorted(set([self.node_id] + list(getattr(self.raft, "peers", []) or [])))
-                # encoding complete; storage/raft wiring follows in later commits
+                transport = getattr(self.raft, "transport", None)
+
+                import concurrent.futures
+
+                def _store_one(i):
+                    owner = owners[i]
+                    data = shards[i] if i < len(shards) else b""
+                    if owner == self.node_id:
+                        try:
+                            self.storage.store_shard(key, i, version, bytes(data))
+                            return True
+                        except Exception:
+                            return False
+                    if transport is not None and hasattr(transport, "store_shard"):
+                        try:
+                            return bool(transport.store_shard(owner, key, i, version, bytes(data)))
+                        except Exception:
+                            return False
+                    return False
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(owners))) as ex:
+                    futs = [ex.submit(_store_one, i) for i in range(len(owners))]
+                    results = [f.result() for f in futs]
+                # parallel StoreShard issued to all owners
                 return kv_pb2.PutResponse(ok=True, version=version)
             except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))

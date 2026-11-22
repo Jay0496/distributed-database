@@ -2,26 +2,16 @@
 
 import contextlib
 import os
-import sys
 import time
 
 try:
     from .ring import ConsistentHashRing
-except Exception:
-    try:
-        from ring import ConsistentHashRing
-    except Exception:
-        ConsistentHashRing = None
-
-try:
-    import grpc
-
-    from gen import kv_pb2, kv_pb2_grpc
 except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import grpc
+    ConsistentHashRing = None
 
-    from gen import kv_pb2, kv_pb2_grpc
+import grpc
+
+from gen import kv_pb2, kv_pb2_grpc
 
 
 class GatewayClient:

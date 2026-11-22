@@ -1,17 +1,10 @@
 """gRPC transport for peer nodes."""
 
 import os
-import sys
 
-try:
-    import grpc
+import grpc
 
-    from gen import kv_pb2, kv_pb2_grpc
-except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import grpc
-
-    from gen import kv_pb2, kv_pb2_grpc
+from gen import kv_pb2, kv_pb2_grpc
 
 
 class GrpcTransport:

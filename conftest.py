@@ -5,15 +5,13 @@ import time
 
 import pytest
 
-try:
-    from node.raft import DirectTransport, RaftNode
-    from node.server import NodeService
-    from node.storage import Storage
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from node.raft import DirectTransport, RaftNode  # type: ignore
-    from node.server import NodeService  # type: ignore
-    from node.storage import Storage  # type: ignore
+ROOT = os.path.dirname(os.path.abspath(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from node.raft import DirectTransport, RaftNode  # noqa: E402
+from node.server import NodeService  # noqa: E402
+from node.storage import Storage  # noqa: E402
 
 
 @pytest.fixture

@@ -12,16 +12,10 @@ No storage or network logic lives here; the engine operates purely on bytes.
 """
 
 import hashlib
-import os
-import sys
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-try:
-    from reedsolo import ReedSolomonError, RSCodec
-except Exception:  # pragma: no cover - fallback import path
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from reedsolo import ReedSolomonError, RSCodec  # type: ignore
+from reedsolo import ReedSolomonError, RSCodec
 
 
 class RedundancyEngine(ABC):

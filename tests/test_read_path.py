@@ -1,14 +1,8 @@
-import os
-import sys
 import time
 
 import pytest
 
-try:
-    import gen.kv_pb2 as kv_pb2
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import gen.kv_pb2 as kv_pb2  # type: ignore
+import gen.kv_pb2 as kv_pb2
 
 
 @pytest.mark.parametrize("mode", ["rs32", "replication"])

@@ -9,11 +9,7 @@ _REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-try:
-    from gateway.client import GatewayClient
-except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.dirname(__file__))
-    from client import GatewayClient  # type: ignore
+from gateway.client import GatewayClient  # noqa: E402
 
 
 def _peers_from_args(args):

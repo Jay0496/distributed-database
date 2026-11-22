@@ -1,13 +1,7 @@
 import contextlib
-import os
-import sys
 import time
 
-try:
-    from node.raft import DirectTransport, RaftNode
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from raft import DirectTransport, RaftNode  # type: ignore
+from node.raft import DirectTransport, RaftNode
 
 
 def make_cluster(n=5, timeout_range=(0.15, 0.30)):

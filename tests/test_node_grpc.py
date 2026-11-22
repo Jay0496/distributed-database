@@ -1,27 +1,14 @@
-import os
-import sys
 import time
+from concurrent import futures
 
 import grpc
 import pytest
 
-try:
-    import gen.kv_pb2 as kv_pb2
-    import gen.kv_pb2_grpc as kv_pb2_grpc
-    from node.raft import RaftNode
-    from node.server import NodeService
-    from node.storage import Storage
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from server import NodeService  # type: ignore
-
-    import gen.kv_pb2 as kv_pb2  # type: ignore
-    import gen.kv_pb2_grpc as kv_pb2_grpc  # type: ignore
-    from raft import RaftNode  # type: ignore
-    from storage import Storage  # type: ignore
-
-from concurrent import futures
+import gen.kv_pb2 as kv_pb2
+import gen.kv_pb2_grpc as kv_pb2_grpc
+from node.raft import RaftNode
+from node.server import NodeService
+from node.storage import Storage
 
 
 @pytest.fixture

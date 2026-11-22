@@ -1,11 +1,5 @@
-import os
-import sys
 
-try:
-    from gateway.client import GatewayClient
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from gateway.client import GatewayClient  # type: ignore
+from gateway.client import GatewayClient
 
 
 class _Resp:

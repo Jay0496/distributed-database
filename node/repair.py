@@ -9,20 +9,7 @@ import contextlib
 import threading
 import time
 
-try:
-    from node.encode import ReplicationEngine, RS32Engine
-except Exception:  # pragma: no cover - alternate import paths
-    try:
-        from encode import ReplicationEngine, RS32Engine  # type: ignore
-    except Exception:
-        try:
-            import os as _os
-            import sys as _sys
-            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-            from node.encode import ReplicationEngine, RS32Engine  # type: ignore
-        except Exception:
-            RS32Engine = None  # type: ignore
-            ReplicationEngine = None  # type: ignore
+from node.encode import ReplicationEngine, RS32Engine
 
 
 def read_repair(engine, shards, canonical_shards, owners, transport, key, version, log=print) -> list[int]:

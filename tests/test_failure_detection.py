@@ -1,12 +1,6 @@
-import os
-import sys
 import time
 
-try:
-    import gen.kv_pb2 as kv_pb2
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import gen.kv_pb2 as kv_pb2  # type: ignore
+import gen.kv_pb2 as kv_pb2
 
 
 def test_degraded_on_peer_failure(cluster):

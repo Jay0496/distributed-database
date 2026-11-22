@@ -4,46 +4,15 @@ import argparse
 import contextlib
 import os
 import signal
-import sys
 import threading
 from concurrent import futures
 
-try:
-    import grpc
-except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import grpc
+import grpc
 
-# ensure repo root (for gen/) is importable
-_REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
-try:
-    from node.raft import RaftNode
-    from node.server import AuthInterceptor, GrpcTransport, NodeService
-    from node.storage import Storage
-except Exception:  # pragma: no cover - running from node/ directly
-    sys.path.insert(0, os.path.dirname(__file__))
-    from server import AuthInterceptor, GrpcTransport, NodeService  # type: ignore
-
-    from raft import RaftNode  # type: ignore
-    from storage import Storage  # type: ignore
-
-try:
-    from node.logging import get_logger, log_event
-except Exception:  # pragma: no cover - alternate import path
-    try:
-        sys.path.insert(0, os.path.dirname(__file__))
-        from logging import get_logger, log_event  # type: ignore
-    except Exception:
-        def get_logger(name):  # type: ignore
-            import logging
-            return logging.getLogger(name)
-
-        def log_event(logger, msg, **fields):  # type: ignore
-            with contextlib.suppress(Exception):
-                logger.info(msg)
+from node.logging import get_logger, log_event
+from node.raft import RaftNode
+from node.server import AuthInterceptor, GrpcTransport, NodeService
+from node.storage import Storage
 
 
 def parse_peers(raw):
@@ -85,34 +54,25 @@ def main() -> None:
     server.start()
     log_event(logger, "listening", port=args.port)
 
-    # Startup sync: pull shards this node should own after Raft recovery.
+    from node.repair import sync_on_start
+
     try:
-        try:
-            from node.repair import sync_on_start
-        except Exception:  # pragma: no cover - alternate import path
-            from repair import sync_on_start  # type: ignore
-        try:
-            _node_index = int(str(args.id).replace("node", "")) - 1
-        except Exception:
-            _node_index = 0
-        if _node_index < 0:
-            _node_index = 0
-
-        def _sync():
-            with contextlib.suppress(Exception):
-                sync_on_start(args.id, _node_index, storage, transport, log=logger.info)
-
-        threading.Thread(target=_sync, daemon=True, name=f"sync-{args.id}").start()
+        _node_index = int(str(args.id).replace("node", "")) - 1
     except Exception:
-        pass
+        _node_index = 0
+    if _node_index < 0:
+        _node_index = 0
+
+    def _sync():
+        with contextlib.suppress(Exception):
+            sync_on_start(args.id, _node_index, storage, transport, log=logger.info)
+
+    threading.Thread(target=_sync, daemon=True, name=f"sync-{args.id}").start()
 
     stop_event = threading.Event()
 
-    # Start background repair sweeper.
-    try:
-        from node.repair import RepairSweeper
-    except Exception:  # pragma: no cover - alternate import path
-        from repair import RepairSweeper  # type: ignore
+    from node.repair import RepairSweeper
+
     try:
         _sweep_interval = float(os.environ.get("SWEEP_INTERVAL", "10.0"))
     except Exception:

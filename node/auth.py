@@ -3,14 +3,8 @@
 import contextlib
 import hmac
 import os
-import sys
 
-try:
-    import grpc
-except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import grpc
-
+import grpc
 
 TOKEN = os.environ.get("TOKEN", "")
 

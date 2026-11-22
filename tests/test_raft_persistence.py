@@ -1,15 +1,8 @@
 import json
-import os
-import sys
 import time
 
-try:
-    from node.raft import RaftLogEntry, RaftNode
-    from node.storage import Storage
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from raft import RaftLogEntry, RaftNode  # type: ignore
-    from storage import Storage  # type: ignore
+from node.raft import RaftLogEntry, RaftNode
+from node.storage import Storage
 
 
 def test_state_and_log_roundtrip(tmp_path):

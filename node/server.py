@@ -2,22 +2,11 @@
 
 import contextlib
 import os
-import sys
+from concurrent import futures
 
-try:
-    from concurrent import futures
-except Exception:  # pragma: no cover
-    import concurrent.futures as futures
+import grpc
 
-try:
-    import grpc
-
-    from gen import kv_pb2, kv_pb2_grpc
-except Exception:  # pragma: no cover
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    import grpc
-
-    from gen import kv_pb2, kv_pb2_grpc
+from gen import kv_pb2, kv_pb2_grpc
 
 # Shared secret for gRPC auth. Empty disables auth (backward compatible).
 TOKEN = os.environ.get("TOKEN", "")
@@ -213,13 +202,7 @@ class NodeService(kv_pb2_grpc.KVServicer):
                         version = 1
                 checksum = hashlib.sha256(value).hexdigest()
                 size = len(value)
-                try:
-                    from node.encode import ReplicationEngine, RS32Engine
-                except Exception:
-                    import os as _os
-                    import sys as _sys
-                    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-                    from node.encode import ReplicationEngine, RS32Engine  # type: ignore
+                from node.encode import ReplicationEngine, RS32Engine
                 engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
                 shards = list(engine.encode(value))  # len 5
                 owners = sorted(set([self.node_id] + list(getattr(self.raft, "peer_ids", []) or getattr(self.raft, "peers", []) or [])))
@@ -364,13 +347,7 @@ class NodeService(kv_pb2_grpc.KVServicer):
         except Exception:
             pass
 
-        try:
-            from node.encode import ReplicationEngine, RS32Engine
-        except Exception:
-            import os as _os
-            import sys as _sys
-            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-            from node.encode import ReplicationEngine, RS32Engine  # type: ignore
+        from node.encode import ReplicationEngine, RS32Engine
 
         engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
 
@@ -386,43 +363,28 @@ class NodeService(kv_pb2_grpc.KVServicer):
             return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
 
         # Read repair: rebuild missing/corrupt shards in the background.
-        try:
-            try:
-                from node.encode import ReplicationEngine, RS32Engine
-            except Exception:
-                import os as _os
-                import sys as _sys
-                _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-                from node.encode import ReplicationEngine, RS32Engine  # type: ignore
-            try:
-                from node.repair import read_repair
-            except Exception:
-                import os as _os
-                import sys as _sys
-                _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-                from node.repair import read_repair  # type: ignore
-            canonical_shards = engine.encode(decoded)
-            # pad owners to nslots
-            _owners = list(owners) if owners is not None else []
-            # resolve node ids -> peer addresses for transport calls
-            pid_map = getattr(self.raft, "peer_id_map", {}) if getattr(self, "raft", None) is not None else {}
-            _resolved = []
-            for o in _owners:
-                if o is None or o == self.node_id:
-                    _resolved.append(o)
-                    continue
-                addr = o
-                for a, pid in (pid_map or {}).items():
-                    if pid == o:
-                        addr = a
-                        break
-                _resolved.append(addr)
-            _owners = _resolved
-            while len(_owners) < nslots:
-                _owners.append(None)
-            read_repair(engine, shards, canonical_shards, _owners, transport, key, version)
-        except Exception:
-            pass
+        from node.encode import ReplicationEngine, RS32Engine
+        from node.repair import read_repair
+        canonical_shards = engine.encode(decoded)
+        # pad owners to nslots
+        _owners = list(owners) if owners is not None else []
+        # resolve node ids -> peer addresses for transport calls
+        pid_map = getattr(self.raft, "peer_id_map", {}) if getattr(self, "raft", None) is not None else {}
+        _resolved = []
+        for o in _owners:
+            if o is None or o == self.node_id:
+                _resolved.append(o)
+                continue
+            addr = o
+            for a, pid in (pid_map or {}).items():
+                if pid == o:
+                    addr = a
+                    break
+            _resolved.append(addr)
+        _owners = _resolved
+        while len(_owners) < nslots:
+            _owners.append(None)
+        read_repair(engine, shards, canonical_shards, _owners, transport, key, version)
 
         return kv_pb2.GetResponse(value=bytes(decoded), found=True, version=version)
 

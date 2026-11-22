@@ -226,7 +226,7 @@ class NodeService(kv_pb2_grpc.KVServicer):
                     from node.encode import ReplicationEngine, RS32Engine  # type: ignore
                 engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
                 shards = list(engine.encode(value))  # len 5
-                owners = sorted(set([self.node_id] + list(getattr(self.raft, "peers", []) or [])))
+                owners = sorted(set([self.node_id] + list(getattr(self.raft, "peer_ids", []) or getattr(self.raft, "peers", []) or [])))
                 transport = getattr(self.raft, "transport", None)
 
                 import concurrent.futures
@@ -240,9 +240,16 @@ class NodeService(kv_pb2_grpc.KVServicer):
                             return True
                         except Exception:
                             return False
+                    # resolve node id -> peer address
+                    addr = owner
+                    pid_map = getattr(self.raft, "peer_id_map", {}) or {}
+                    for a, pid in (pid_map or {}).items():
+                        if pid == owner:
+                            addr = a
+                            break
                     if transport is not None and hasattr(transport, "store_shard"):
                         try:
-                            return bool(transport.store_shard(owner, key, i, version, bytes(data)))
+                            return bool(transport.store_shard(addr, key, i, version, bytes(data)))
                         except Exception:
                             return False
                     return False
@@ -322,9 +329,15 @@ class NodeService(kv_pb2_grpc.KVServicer):
                     return i, self.storage.fetch_shard(key, i)
                 except Exception:
                     return i, None
+            addr = owner
+            pid_map = getattr(self.raft, "peer_id_map", {}) or {} if getattr(self, "raft", None) is not None else {}
+            for a, pid in (pid_map or {}).items():
+                if pid == owner:
+                    addr = a
+                    break
             if transport is not None and hasattr(transport, "fetch_shard"):
                 try:
-                    return i, transport.fetch_shard(owner, key, i)
+                    return i, transport.fetch_shard(addr, key, i)
                 except Exception:
                     return i, None
             return i, None
@@ -398,6 +411,20 @@ class NodeService(kv_pb2_grpc.KVServicer):
             canonical_shards = engine.encode(decoded)
             # pad owners to nslots
             _owners = list(owners) if owners is not None else []
+            # resolve node ids -> peer addresses for transport calls
+            pid_map = getattr(self.raft, "peer_id_map", {}) if getattr(self, "raft", None) is not None else {}
+            _resolved = []
+            for o in _owners:
+                if o is None or o == self.node_id:
+                    _resolved.append(o)
+                    continue
+                addr = o
+                for a, pid in (pid_map or {}).items():
+                    if pid == o:
+                        addr = a
+                        break
+                _resolved.append(addr)
+            _owners = _resolved
             while len(_owners) < nslots:
                 _owners.append(None)
             read_repair(engine, shards, canonical_shards, _owners, transport, key, version)

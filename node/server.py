@@ -99,7 +99,8 @@ class NodeService(kv_pb2_grpc.KVServicer):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(owners))) as ex:
                     futs = [ex.submit(_store_one, i) for i in range(len(owners))]
                     results = [f.result() for f in futs]
-                # parallel StoreShard issued to all owners
+                if len(results) != len(owners) or not all(results):
+                    return kv_pb2.PutResponse(ok=False, error="store shard failed")
                 return kv_pb2.PutResponse(ok=True, version=version)
             except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))

@@ -624,6 +624,8 @@ class RaftNode:
             entry = RaftLogEntry(term=self.current_term, index=0, command=bytes(command))
             idx = self._persist_append(entry)
             self.log.append(entry)
+            self._persist_state()
+            self._advance_commit_index_locked()
         threading.Thread(target=self._replication_round, daemon=True).start()
         return idx
 

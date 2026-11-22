@@ -19,13 +19,13 @@ echo "[5] Cluster status"
 docker compose run --rm gateway status
 
 echo "[6] Kill node3"
-docker stop node3
+docker compose stop node3
 
 echo "[7] Read still succeeds with one node down"
 docker compose run --rm gateway get demo-key
 
 echo "[8] Restart node3"
-docker start node3
+docker compose start node3
 
 echo "[9] Final status"
 sleep 5

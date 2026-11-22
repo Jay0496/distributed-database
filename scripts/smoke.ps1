@@ -35,7 +35,7 @@ try {
     if ($getOut -notmatch '"value": "hello"') { throw "value mismatch" }
 
     # 6. kill one node
-    docker stop node3 | Out-Null
+    docker compose stop node3 | Out-Null
 
     # 7. get still works with one node down
     $getOut = (docker compose run --rm gateway get smoke-key 2>$null)
@@ -44,7 +44,7 @@ try {
     if ($getOut -notmatch '"value": "hello"') { throw "value mismatch (1 node down)" }
 
     # 8. kill a second node
-    docker stop node4 | Out-Null
+    docker compose stop node4 | Out-Null
 
     # 9. get still works with two nodes down
     $getOut = (docker compose run --rm gateway get smoke-key 2>$null)
@@ -53,7 +53,7 @@ try {
     if ($getOut -notmatch '"value": "hello"') { throw "value mismatch (2 nodes down)" }
 
     # 10. restart stopped nodes
-    docker start node3 node4 | Out-Null
+    docker compose start node3 node4 | Out-Null
 
     # 11. wait for healthy
     $deadline = (Get-Date).AddSeconds(30)

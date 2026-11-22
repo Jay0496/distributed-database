@@ -61,23 +61,46 @@ class RaftNode:
         self._thread: Optional[threading.Thread] = None
         self.election_deadline = 0.0
 
-        self._load_state()
+        self.load_from_storage()
 
-    def _load_state(self) -> None:
+    def load_from_storage(self) -> None:
         if self.storage is None:
             return
-        try:
-            v = self.storage.get_raft_state("current_term")
-            if v is not None:
-                self.current_term = int(v)
-        except Exception:
-            pass
-        try:
-            v = self.storage.get_raft_state("voted_for")
-            if v is not None and v not in ("", "None", None):
-                self.voted_for = v
-        except Exception:
-            pass
+        with self._lock:
+            try:
+                self.current_term = int(self.storage.get_raft_state("current_term") or 0)
+            except Exception:
+                self.current_term = 0
+            try:
+                vf = self.storage.get_raft_state("voted_for")
+                self.voted_for = vf if vf not in (None, "") else None
+            except Exception:
+                self.voted_for = None
+            try:
+                self.commit_index = int(self.storage.get_raft_state("commit_index") or 0)
+            except Exception:
+                self.commit_index = 0
+            try:
+                rows = self.storage.get_log_from(1)
+                rows = sorted(rows, key=lambda r: r["idx"])
+                new_log = [RaftLogEntry(term=0, index=0, command=b"")]
+                for r in rows:
+                    cmd = r.get("command", b"")
+                    if isinstance(cmd, str):
+                        cmd = cmd.encode()
+                    elif not isinstance(cmd, (bytes, bytearray)):
+                        cmd = bytes(cmd) if cmd is not None else b""
+                    new_log.append(
+                        RaftLogEntry(
+                            term=int(r.get("term", 0)),
+                            index=int(r.get("idx", r.get("index", 0))),
+                            command=bytes(cmd),
+                        )
+                    )
+                self.log = new_log
+            except Exception:
+                pass
+            self.last_applied = 0
 
     def _persist_term(self) -> None:
         if self.storage is None:

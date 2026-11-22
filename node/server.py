@@ -99,14 +99,6 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return self.degraded
 
     @property
-    def unhealthy(self):
-        return self.degraded
-
-    @property
-    def failed_peers(self):
-        return self.degraded
-
-    @property
     def last_seen(self):
         if getattr(self, "raft", None) is not None and hasattr(self.raft, "last_seen"):
             try:

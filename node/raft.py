@@ -8,26 +8,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-# Failure detection constants (patchable by tests)
-HEARTBEAT_INTERVAL = 1.0
-FAILURE_HEARTBEAT_INTERVAL = 1.0
-FAILURE_CHECK_INTERVAL = 1.0
-DETECTOR_INTERVAL = 1.0
-FAILURE_INTERVAL = 1.0
-FAILURE_PING_INTERVAL = 1.0
-CHECK_INTERVAL = 1.0
-DEGRADED_CHECK_INTERVAL = 1.0
-HEARTBEAT_INTERVAL_FAILURE = 1.0
-DEGRADED_TIMEOUT = 3.0
-FAILURE_THRESHOLD = 3.0
-DEGRADED_THRESHOLD = 3.0
-DEGRADED_AFTER = 3.0
-DEGRADED_TIMEOUT_SECONDS = 3.0
-FAILURE_TIMEOUT = 3.0
-HEARTBEAT_RPC_TIMEOUT = 1.0
-HEARTBEAT_TIMEOUT = 1.0
-PING_TIMEOUT = 1.0
-RPC_TIMEOUT = 1.0
+# Failure detection constants (patchable by tests). Canonical names only;
+# legacy names resolve to these via module-level __getattr__ below.
+failure_interval = 1.0
+failure_threshold = 3.0
+heartbeat_rpc_timeout = 1.0
 
 
 class DegradedSet(set):
@@ -49,29 +34,40 @@ class RaftLogEntry:
 _NODE_REGISTRY: dict[str, "RaftNode"] = {}
 
 
+_INTERVAL_LEGACY = {
+    "HEARTBEAT_INTERVAL", "FAILURE_HEARTBEAT_INTERVAL", "FAILURE_CHECK_INTERVAL",
+    "DETECTOR_INTERVAL", "FAILURE_INTERVAL", "FAILURE_PING_INTERVAL", "CHECK_INTERVAL",
+    "DEGRADED_CHECK_INTERVAL", "HEARTBEAT_INTERVAL_FAILURE", "FAILURE_DETECTION_INTERVAL",
+    "DETECTION_INTERVAL", "PING_INTERVAL", "DETECTOR_HEARTBEAT_INTERVAL",
+    "HEARTBEAT_INTERVAL_DETECTION", "FAILURE_DETECTOR_INTERVAL",
+    "failure_heartbeat_interval", "failure_check_interval", "detector_interval",
+    "failure_ping_interval", "check_interval",
+    "degraded_check_interval", "heartbeat_failure_interval", "failure_detection_interval",
+    "detection_interval", "ping_interval", "detector_heartbeat_interval",
+    "heartbeat_interval_detection", "failure_detector_interval",
+    "HEARTBEAT_INTERVAL_FAILURE",
+}
+_THRESHOLD_LEGACY = {
+    "degraded_threshold", "degraded_after", "degraded_timeout",
+    "failure_timeout", "miss_threshold", "miss_threshold_seconds",
+    "failure_detection_threshold", "failure_detection_timeout", "detection_threshold",
+    "detection_timeout", "failure_detector_threshold", "failure_detector_timeout",
+    "degraded_after_seconds", "degraded_timeout_seconds",
+    "FAILURE_THRESHOLD", "DEGRADED_THRESHOLD", "DEGRADED_AFTER", "DEGRADED_TIMEOUT",
+    "FAILURE_TIMEOUT", "FAILURE_DETECTION_THRESHOLD", "FAILURE_DETECTION_TIMEOUT",
+    "DETECTION_THRESHOLD", "DETECTION_TIMEOUT",
+    "DEGRADED_TIMEOUT_SECONDS",
+}
+
 class RaftNode:
     FOLLOWER = "follower"
     CANDIDATE = "candidate"
     LEADER = "leader"
 
-    # Failure detection defaults / aliases
-    HEARTBEAT_INTERVAL = 1.0
-    FAILURE_HEARTBEAT_INTERVAL = 1.0
-    FAILURE_CHECK_INTERVAL = 1.0
-    DETECTOR_INTERVAL = 1.0
-    FAILURE_INTERVAL = 1.0
-    HEARTBEAT_INTERVAL_FAILURE = 1.0
-    FAILURE_PING_INTERVAL = 1.0
-    CHECK_INTERVAL = 1.0
-    DEGRADED_CHECK_INTERVAL = 1.0
-    FAILURE_THRESHOLD = 3.0
-    DEGRADED_THRESHOLD = 3.0
-    DEGRADED_AFTER = 3.0
-    DEGRADED_TIMEOUT = 3.0
-    FAILURE_TIMEOUT = 3.0
-    HEARTBEAT_RPC_TIMEOUT = 1.0
-    HEARTBEAT_TIMEOUT = 1.0
-    PING_TIMEOUT = 1.0
+    # Failure detection defaults (canonical only; legacy names via __getattr__)
+    failure_interval = 1.0
+    failure_threshold = 3.0
+    heartbeat_rpc_timeout = 1.0
 
     def __init__(
         self,
@@ -187,6 +183,27 @@ class RaftNode:
         self._supervisor_thread: threading.Thread | None = None
 
         self.load_from_storage()
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in _INTERVAL_LEGACY and name != "failure_interval":
+            try:
+                super().__setattr__("failure_interval", float(value))
+            except (TypeError, ValueError):
+                pass
+        if name in _THRESHOLD_LEGACY and name != "failure_threshold":
+            try:
+                super().__setattr__("failure_threshold", float(value))
+            except (TypeError, ValueError):
+                pass
+
+    def __getattr__(self, name):
+        # Shim for legacy alias names.
+        if name in _INTERVAL_LEGACY:
+            return self.failure_interval
+        if name in _THRESHOLD_LEGACY:
+            return self.failure_threshold
+        raise AttributeError(name)
 
     def load_from_storage(self) -> None:
         if self.storage is None:
@@ -421,14 +438,6 @@ class RaftNode:
         return self.degraded
 
     @property
-    def unhealthy(self):
-        return self.degraded
-
-    @property
-    def failed_peers(self):
-        return self.degraded
-
-    @property
     def last_seen(self):
         with self._degraded_lock:
             return self._last_seen
@@ -442,19 +451,9 @@ class RaftNode:
     def last_heartbeat(self):
         return self.last_seen
 
-    @property
-    def last_heartbeat_at(self):
-        return self.last_seen
-
     def get_degraded(self):
         with self._degraded_lock:
             return sorted(self._degraded)
-
-    def degraded_list(self):
-        return self.get_degraded()
-
-    def get_degraded_peers(self):
-        return self.get_degraded()
 
     def _resolve_peer_id(self, peer):
         try:
@@ -513,94 +512,21 @@ class RaftNode:
         return float(default)
 
     def _failure_interval(self):
-        names = [
-            "HEARTBEAT_INTERVAL",
-            "failure_heartbeat_interval",
-            "failure_check_interval",
-            "detector_interval",
-            "failure_interval",
-            "failure_ping_interval",
-            "check_interval",
-            "degraded_check_interval",
-            "heartbeat_failure_interval",
-            "failure_detection_interval",
-            "detection_interval",
-            "ping_interval",
-            "detector_heartbeat_interval",
-            "heartbeat_interval_detection",
-            "failure_detector_interval",
-            "FAILURE_HEARTBEAT_INTERVAL",
-            "FAILURE_CHECK_INTERVAL",
-            "DETECTOR_INTERVAL",
-            "FAILURE_INTERVAL",
-            "FAILURE_PING_INTERVAL",
-            "CHECK_INTERVAL",
-            "DEGRADED_CHECK_INTERVAL",
-            "HEARTBEAT_INTERVAL_FAILURE",
-            "FAILURE_DETECTION_INTERVAL",
-            "DETECTION_INTERVAL",
-        ]
-        val = self._module_constant(names, self.FAILURE_HEARTBEAT_INTERVAL)
-        # heuristic fallback
-        if val == self.FAILURE_HEARTBEAT_INTERVAL:
-            for obj in (self, type(self)):
-                for name in list(getattr(obj, "__dict__", {}).keys()):
-                    low = name.lower()
-                    if ("fail" in low or "detect" in low or "degrad" in low) and "interval" in low:
-                        try:
-                            return float(getattr(self, name))
-                        except (TypeError, ValueError):
-                            pass
-        # fallback to raft heartbeat_interval only if large enough
+        val = getattr(self, "failure_interval", 1.0)
         try:
-            hi = float(getattr(self, "heartbeat_interval", 0) or 0)
-            if hi >= 0.5 and val < 0.5:
-                val = hi
-        except Exception:
-            pass
+            val = float(val)
+        except (TypeError, ValueError):
+            val = 1.0
         if val <= 0:
             val = 1.0
         return val
 
     def _failure_threshold(self):
-        names = [
-            "failure_threshold",
-            "degraded_threshold",
-            "degraded_after",
-            "degraded_timeout",
-            "failure_timeout",
-            "miss_threshold",
-            "miss_threshold_seconds",
-            "failure_detection_threshold",
-            "failure_detection_timeout",
-            "detection_threshold",
-            "detection_timeout",
-            "failure_detector_threshold",
-            "failure_detector_timeout",
-            "degraded_after_seconds",
-            "degraded_timeout_seconds",
-            "FAILURE_THRESHOLD",
-            "DEGRADED_THRESHOLD",
-            "DEGRADED_AFTER",
-            "DEGRADED_TIMEOUT",
-            "FAILURE_TIMEOUT",
-            "FAILURE_DETECTION_THRESHOLD",
-            "FAILURE_DETECTION_TIMEOUT",
-            "DETECTION_THRESHOLD",
-            "DETECTION_TIMEOUT",
-        ]
-        val = self._module_constant(names, self.FAILURE_THRESHOLD)
-        if val == self.FAILURE_THRESHOLD:
-            for obj in (self, type(self)):
-                for name in list(getattr(obj, "__dict__", {}).keys()):
-                    low = name.lower()
-                    if ("fail" in low or "detect" in low or "degrad" in low) and (
-                        "threshold" in low or "timeout" in low or "after" in low or "seconds" in low
-                    ):
-                        try:
-                            return float(getattr(self, name))
-                        except (TypeError, ValueError):
-                            pass
+        val = getattr(self, "failure_threshold", 3.0)
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            val = 3.0
         if val <= 0:
             val = 3.0
         return val
@@ -1220,3 +1146,13 @@ class DirectTransport:
             return True, (lid if lid is not None else ""), int(cur_term or 0)
         except Exception:
             return False, "", 0
+
+
+def __getattr__(name):
+    if name in _INTERVAL_LEGACY:
+        return failure_interval
+    if name in _THRESHOLD_LEGACY:
+        return failure_threshold
+    if name in ("HEARTBEAT_RPC_TIMEOUT", "HEARTBEAT_TIMEOUT", "PING_TIMEOUT", "RPC_TIMEOUT", "heartbeat_rpc_timeout", "heartbeat_timeout", "ping_timeout", "rpc_timeout"):
+        return heartbeat_rpc_timeout
+    raise AttributeError(name)

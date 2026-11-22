@@ -97,6 +97,18 @@ class RaftNode:
         except Exception:
             pass
 
+    def _persist_state(self) -> None:
+        if self.storage is None:
+            return
+        try:
+            self.storage.set_raft_state("current_term", str(self.current_term))
+            self.storage.set_raft_state(
+                "voted_for", self.voted_for if self.voted_for is not None else ""
+            )
+            self.storage.set_raft_state("commit_index", str(self.commit_index))
+        except Exception:
+            pass
+
     def last_log_index(self) -> int:
         if not self.log:
             return 0
@@ -193,8 +205,8 @@ class RaftNode:
                 self.voted_for = None
                 self.state = self.FOLLOWER
                 self._leader_id = None
-                self._persist_term()
-                self._persist_voted_for()
+                self._persist_state()
+                self._persist_state()
                 self._reset_election_timer()
 
             if term < self.current_term:
@@ -211,7 +223,7 @@ class RaftNode:
             if (self.voted_for is None or self.voted_for == candidate_id) and log_ok():
                 self.voted_for = candidate_id
                 granted = True
-                self._persist_voted_for()
+                self._persist_state()
                 self._reset_election_timer()
 
             return self.current_term, granted
@@ -228,8 +240,8 @@ class RaftNode:
                 self.voted_for = None
                 self.state = self.FOLLOWER
                 self._leader_id = None
-                self._persist_term()
-                self._persist_voted_for()
+                self._persist_state()
+                self._persist_state()
 
             self._leader_id = leader_id
             self.state = self.FOLLOWER
@@ -265,6 +277,7 @@ class RaftNode:
                 new_commit = min(int(leader_commit), self.last_log_index())
                 if new_commit > self.commit_index:
                     self.commit_index = new_commit
+                    self._persist_state()
                     self._apply_committed_locked()
 
             return self.current_term, True
@@ -304,6 +317,7 @@ class RaftNode:
                     count += 1
             if count >= majority:
                 self.commit_index = i
+                self._persist_state()
                 self._apply_committed_locked()
                 break
 
@@ -337,8 +351,8 @@ class RaftNode:
             self.voted_for = self.node_id
             self._leader_id = None
             term = self.current_term
-            self._persist_term()
-            self._persist_voted_for()
+            self._persist_state()
+            self._persist_state()
             self._reset_election_timer()
 
         last_idx = self.last_log_index()
@@ -380,8 +394,8 @@ class RaftNode:
                     self.voted_for = None
                     self.state = self.FOLLOWER
                     self._leader_id = None
-                    self._persist_term()
-                    self._persist_voted_for()
+                    self._persist_state()
+                    self._persist_state()
                     self._reset_election_timer()
                     return
             votes = 1 + sum(1 for _, _, g in results if g)
@@ -442,8 +456,8 @@ class RaftNode:
                         self.voted_for = None
                         self.state = self.FOLLOWER
                         self._leader_id = None
-                        self._persist_term()
-                        self._persist_voted_for()
+                        self._persist_state()
+                        self._persist_state()
                         self._reset_election_timer()
                 return
 

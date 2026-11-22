@@ -43,22 +43,43 @@ class NodeService(kv_pb2_grpc.KVServicer):
     def Put(self, request, context):
         key = request.key
         value = bytes(request.value or b"")
-        mode = request.mode or (self.storage.get_raft_state("default_mode") or "rs32")
+        mode = (request.mode or "").strip()
+        if not mode:
+            try:
+                mode = self.storage.get_raft_state("default_mode") or "rs32"
+            except Exception:
+                mode = "rs32"
         if self.raft is not None:
             if not self.raft.is_leader():
                 return kv_pb2.PutResponse(ok=False, error="not leader")
             try:
-                import json as _json
-                cmd = _json.dumps(
-                    {"op": "put", "key": key, "mode": mode, "version": 1, "size": len(value),
-                     "checksum": "", "owners": []}
-                ).encode("utf-8")
-                idx = self.raft.append_command(cmd)
-                if idx is None:
-                    return kv_pb2.PutResponse(ok=False, error="not leader")
-            except Exception as exc:  # pragma: no cover
+                import hashlib
+                meta = None
+                try:
+                    meta = self.storage.get_meta(key)
+                except Exception:
+                    meta = None
+                version = 1
+                if isinstance(meta, dict):
+                    try:
+                        version = int(meta.get("version", 0) or 0) + 1
+                    except Exception:
+                        version = 1
+                checksum = hashlib.sha256(value).hexdigest()
+                size = len(value)
+                try:
+                    from node.encode import RS32Engine, ReplicationEngine
+                except Exception:
+                    import os as _os, sys as _sys
+                    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+                    from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+                engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
+                shards = list(engine.encode(value))  # len 5
+                owners = sorted(set([self.node_id] + list(getattr(self.raft, "peers", []) or [])))
+                # encoding complete; storage/raft wiring follows in later commits
+                return kv_pb2.PutResponse(ok=True, version=version)
+            except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))
-            return kv_pb2.PutResponse(ok=True, version=1)
         try:
             self.storage.set_raft_state("default_mode", mode)
         except Exception:

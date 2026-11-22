@@ -406,57 +406,63 @@ class RaftNode:
                 pass
 
     def _replicate_once(self, peer: str) -> None:
-        with self._lock:
-            if self.state != self.LEADER:
-                return
-            term = self.current_term
-            ni = self.next_index.get(peer, self.last_log_index() + 1)
-            if ni < 1:
-                ni = 1
-            prev_idx = ni - 1
-            prev_term = self._term_at(prev_idx)
-            entries = list(self.log[ni:])
-            commit = self.commit_index
-
-        try:
-            pt, success = self.transport.append_entries(
-                peer,
-                {
-                    "term": term,
-                    "leader_id": self.node_id,
-                    "prev_log_index": prev_idx,
-                    "prev_log_term": prev_term,
-                    "entries": entries,
-                    "leader_commit": commit,
-                },
-            )
-        except Exception:
-            pt, success = 0, False
-
-        if pt is not None and pt > term:
+        max_attempts = 3
+        for attempt in range(max_attempts):
             with self._lock:
-                if pt > self.current_term:
-                    self.current_term = pt
-                    self.voted_for = None
-                    self.state = self.FOLLOWER
-                    self._leader_id = None
-                    self._persist_term()
-                    self._persist_voted_for()
-                    self._reset_election_timer()
-            return
+                if self.state != self.LEADER:
+                    return
+                term = self.current_term
+                ni = self.next_index.get(peer, self.last_log_index() + 1)
+                if ni < 1:
+                    ni = 1
+                prev_idx = ni - 1
+                prev_term = self._term_at(prev_idx)
+                entries = list(self.log[ni:])
+                commit = self.commit_index
 
-        with self._lock:
-            if self.state != self.LEADER or self.current_term != term:
+            try:
+                pt, success = self.transport.append_entries(
+                    peer,
+                    {
+                        "term": term,
+                        "leader_id": self.node_id,
+                        "prev_log_index": prev_idx,
+                        "prev_log_term": prev_term,
+                        "entries": entries,
+                        "leader_commit": commit,
+                    },
+                )
+            except Exception:
+                pt, success = 0, False
+
+            if pt is not None and pt > term:
+                with self._lock:
+                    if pt > self.current_term:
+                        self.current_term = pt
+                        self.voted_for = None
+                        self.state = self.FOLLOWER
+                        self._leader_id = None
+                        self._persist_term()
+                        self._persist_voted_for()
+                        self._reset_election_timer()
                 return
-            if success:
-                new_match = prev_idx + len(entries)
-                if new_match > self.match_index.get(peer, 0):
-                    self.match_index[peer] = new_match
-                self.next_index[peer] = new_match + 1
-                self._advance_commit_index_locked()
-            else:
-                cur = self.next_index.get(peer, self.last_log_index() + 1)
-                self.next_index[peer] = max(1, cur - 1)
+
+            with self._lock:
+                if self.state != self.LEADER or self.current_term != term:
+                    return
+                if success:
+                    new_match = prev_idx + len(entries)
+                    if new_match > self.match_index.get(peer, 0):
+                        self.match_index[peer] = new_match
+                    self.next_index[peer] = new_match + 1
+                    self._advance_commit_index_locked()
+                    return
+                else:
+                    cur = self.next_index.get(peer, self.last_log_index() + 1)
+                    self.next_index[peer] = max(1, cur - 1)
+
+            if attempt < max_attempts - 1:
+                time.sleep(0.01 * (attempt + 1))
 
     def _send_heartbeats(self) -> None:
         self._replication_round()

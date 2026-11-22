@@ -35,7 +35,6 @@ class GatewayClient:
         self._leader = None
         self._last_resp = None
         self._mode = None
-        self._mode = None
         self.ring = None
         if ConsistentHashRing is not None:
             try:
@@ -180,46 +179,6 @@ class GatewayClient:
             "key_count": int(getattr(resp, "key_count", 0) or 0),
         }
 
-
-    def _leader_response(self):
-        stub = self.get_leader_stub()
-        if stub is None:
-            return None
-        try:
-            return stub.GetLeader(kv_pb2.GetLeaderRequest(), timeout=2.0)
-        except Exception:
-            return None
-
-    def status(self):
-        """Return dict: leader, degraded, mode, key_count."""
-        resp = self._leader_response()
-        if resp is None:
-            self._leader = None
-            self.discover_leader()
-            resp = self._leader_response()
-        if resp is None:
-            return {"leader": self._leader, "degraded": [], "mode": None, "key_count": 0}
-        if self._leader is None:
-            self._leader = self._map_leader_to_addr(getattr(resp, "leader", None))
-        mode = getattr(resp, "mode", None)
-        self._mode = mode
-        return {
-            "leader": self._leader if self._leader is not None else getattr(resp, "leader", None),
-            "degraded": list(getattr(resp, "degraded", []) or []),
-            "mode": mode,
-            "key_count": int(getattr(resp, "key_count", 0) or 0),
-        }
-
-
-    def set_mode(self, mode) -> bool:
-        """Set cluster default mode via leader."""
-        def _do(stub):
-            resp = stub.SetMode(kv_pb2.SetModeRequest(mode=mode), timeout=2.0)
-            return bool(getattr(resp, "ok", False))
-        try:
-            return bool(self.call_with_retry(_do))
-        except Exception:
-            return False
 
 
     def set_mode(self, mode) -> bool:

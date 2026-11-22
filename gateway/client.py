@@ -210,6 +210,28 @@ class GatewayClient:
             "key_count": int(getattr(resp, "key_count", 0) or 0),
         }
 
+
+    def set_mode(self, mode) -> bool:
+        """Set cluster default mode via leader."""
+        def _do(stub):
+            resp = stub.SetMode(kv_pb2.SetModeRequest(mode=mode), timeout=2.0)
+            return bool(getattr(resp, "ok", False))
+        try:
+            return bool(self.call_with_retry(_do))
+        except Exception:
+            return False
+
+
+    def set_mode(self, mode) -> bool:
+        """Set cluster default mode via leader."""
+        def _do(stub):
+            resp = stub.SetMode(kv_pb2.SetModeRequest(mode=mode), timeout=2.0)
+            return bool(getattr(resp, "ok", False))
+        try:
+            return bool(self.call_with_retry(_do))
+        except Exception:
+            return False
+
     def call_with_retry(self, fn):
         """Invoke fn(stub); rediscover leader and retry on failure."""
         last_exc = None

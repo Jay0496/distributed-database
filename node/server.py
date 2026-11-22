@@ -40,6 +40,26 @@ class NodeService(kv_pb2_grpc.KVServicer):
         keys = list(self.storage.list_meta_keys())
         return kv_pb2.ListKeysResponse(keys=keys)
 
+    def SetMode(self, request, context):
+        mode = request.mode
+        if self.raft is not None:
+            if not self.raft.is_leader():
+                return kv_pb2.SetModeResponse(ok=False, mode=mode, error="not leader")
+            try:
+                import json as _json
+                cmd = _json.dumps({"op": "mode", "mode": mode}).encode("utf-8")
+                idx = self.raft.append_command(cmd)
+                if idx is None:
+                    return kv_pb2.SetModeResponse(ok=False, mode=mode, error="not leader")
+            except Exception as exc:  # pragma: no cover
+                return kv_pb2.SetModeResponse(ok=False, mode=mode, error=str(exc))
+            return kv_pb2.SetModeResponse(ok=True, mode=mode)
+        try:
+            self.storage.set_raft_state("default_mode", mode)
+        except Exception:
+            pass
+        return kv_pb2.SetModeResponse(ok=True, mode=mode)
+
     def GetLeader(self, request, context):
         leader = self.raft.leader_id()
         mode = self.storage.get_raft_state("default_mode") or "rs32"

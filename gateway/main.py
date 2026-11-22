@@ -32,6 +32,8 @@ def main(argv=None) -> None:
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("status")
+    mode_p = sub.add_parser("mode")
+    mode_p.add_argument("mode")
 
     args = parser.parse_args(argv)
     peers = _peers_from_args(args)
@@ -39,6 +41,10 @@ def main(argv=None) -> None:
 
     if args.command == "status":
         print(json.dumps(client.status()))
+        return
+    if args.command == "mode":
+        ok = client.set_mode(args.mode)
+        print(json.dumps({"ok": bool(ok), "mode": args.mode}))
         return
     if args.command is None:
         parser.print_help()

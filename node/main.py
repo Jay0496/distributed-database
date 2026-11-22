@@ -64,6 +64,19 @@ def main() -> None:
 
     stop_event = threading.Event()
 
+    # Start background repair sweeper.
+    try:
+        from node.repair import RepairSweeper
+    except Exception:  # pragma: no cover - alternate import path
+        from repair import RepairSweeper  # type: ignore
+    try:
+        _sweep_interval = float(os.environ.get("SWEEP_INTERVAL", "10.0"))
+    except Exception:
+        _sweep_interval = 10.0
+    sweeper = RepairSweeper(args.id, storage, transport, interval=_sweep_interval, stop_event=stop_event)
+    sweeper_thread = threading.Thread(target=sweeper.run, daemon=True, name=f"sweep-{args.id}")
+    sweeper_thread.start()
+
     def _shutdown(signum, frame):
         stop_event.set()
 
@@ -74,6 +87,15 @@ def main() -> None:
         pass
 
     stop_event.wait()
+
+    try:
+        sweeper.stop()
+    except Exception:
+        pass
+    try:
+        sweeper_thread.join(timeout=2.0)
+    except Exception:
+        pass
 
     try:
         raft.stop()

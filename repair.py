@@ -1,8 +1,11 @@
-"""Compatibility shim: allow ``from repair import read_repair`` from repo root."""
+"""Compatibility shim: allow ``from repair import ...`` from repo root."""
 
 try:
-    from node.repair import read_repair  # noqa: F401
+    from node.repair import read_repair, RepairSweeper  # noqa: F401
 except Exception:
-    from repair import read_repair  # noqa: F401
+    try:
+        from repair import read_repair, RepairSweeper  # noqa: F401
+    except Exception:
+        pass
 
-__all__ = ["read_repair"]
+__all__ = ["read_repair", "RepairSweeper"]

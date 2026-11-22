@@ -37,10 +37,21 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.HasShardResponse(present=present)
 
     def ListKeys(self, request, context):
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, "not implemented")
+        keys = list(self.storage.list_meta_keys())
+        return kv_pb2.ListKeysResponse(keys=keys)
 
     def GetLeader(self, request, context):
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, "not implemented")
+        leader = self.raft.leader_id()
+        mode = self.storage.get_raft_state("default_mode") or "rs32"
+        term = self.raft.current_term
+        key_count = len(self.storage.list_meta_keys())
+        return kv_pb2.GetLeaderResponse(
+            leader=leader if leader is not None else "",
+            degraded=[],
+            mode=mode,
+            term=int(term),
+            key_count=int(key_count),
+        )
 
     def Heartbeat(self, request, context):
         context.abort(grpc.StatusCode.UNIMPLEMENTED, "not implemented")

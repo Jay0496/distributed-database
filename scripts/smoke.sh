@@ -36,4 +36,12 @@ get_out=$(docker compose run --rm gateway get smoke-key 2>/dev/null)
 echo "${get_out}"
 echo "${get_out}" | grep -q '"found": true' || { echo "get failed" >&2; exit 1; }
 echo "${get_out}" | grep -q '"value": "hello"' || { echo "value mismatch" >&2; exit 1; }
-EOF
+
+# 6. kill one node
+docker stop node3
+
+# 7. get still works with one node down
+get_out=$(docker compose run --rm gateway get smoke-key 2>/dev/null)
+echo "${get_out}"
+echo "${get_out}" | grep -q '"found": true' || { echo "get failed (1 node down)" >&2; exit 1; }
+echo "${get_out}" | grep -q '"value": "hello"' || { echo "value mismatch (1 node down)" >&2; exit 1; }

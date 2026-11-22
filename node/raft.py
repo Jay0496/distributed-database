@@ -81,6 +81,9 @@ class RaftNode:
         transport: Any = None,
         election_timeout_range: tuple = (0.15, 0.30),
         heartbeat_interval: float = 0.05,
+        peer_ids: List[str] = None,
+        peer_id_map: Any = None,
+        peers_ids: List[str] = None,
         failure_heartbeat_interval: float = 1.0,
         failure_threshold: float = 3.0,
         degraded_threshold: float = None,
@@ -93,6 +96,11 @@ class RaftNode:
     ):
         self.node_id = node_id
         self.peers = list(peers)
+        # peer id mapping (address -> node id). Defaults to identity for in-process tests.
+        self.peer_ids = list(peer_ids) if peer_ids is not None else None
+        self.peer_id_map = dict(peer_id_map) if peer_id_map is not None else None
+        if self.peer_ids is None:
+            self.peer_ids = list(self.peers)
         self.storage = storage
         self.election_timeout_range = tuple(election_timeout_range)
         self.heartbeat_interval = heartbeat_interval
@@ -128,6 +136,23 @@ class RaftNode:
                 setattr(self, k, v)
             except Exception:
                 pass
+        # alias support
+        if getattr(self, "peers_ids", None) and not getattr(self, "peer_ids", None):
+            try:
+                self.peer_ids = list(self.peers_ids)
+            except Exception:
+                pass
+        if not getattr(self, "peer_ids", None):
+            self.peer_ids = list(self.peers)
+        if len(self.peer_ids) != len(self.peers):
+            self.peer_ids = list(self.peers)
+        if not getattr(self, "peer_id_map", None):
+            self.peer_id_map = {}
+        self.peer_id_map = dict(self.peer_id_map or {})
+        for i, addr in enumerate(self.peers):
+            pid = self.peer_ids[i] if i < len(self.peer_ids) else addr
+            self.peer_id_map.setdefault(addr, pid)
+            self.peer_id_map.setdefault(str(addr), pid)
 
         if transport is None:
             _NODE_REGISTRY[node_id] = self
@@ -431,13 +456,23 @@ class RaftNode:
     def get_degraded_peers(self):
         return self.get_degraded()
 
+    def _resolve_peer_id(self, peer):
+        try:
+            if peer in self.peer_id_map:
+                return self.peer_id_map.get(peer, peer)
+            if str(peer) in self.peer_id_map:
+                return self.peer_id_map.get(str(peer), peer)
+        except Exception:
+            pass
+        return peer
+
     def mark_degraded(self, peer):
         with self._degraded_lock:
-            self._degraded.add(peer)
+            self._degraded.add(self._resolve_peer_id(peer))
 
     def clear_degraded(self, peer):
         with self._degraded_lock:
-            self._degraded.discard(peer)
+            self._degraded.discard(self._resolve_peer_id(peer))
 
     def _module_constant(self, names, default):
         # instance
@@ -676,16 +711,21 @@ class RaftNode:
                         term_resp = 0
                     with self._degraded_lock:
                         now = time.monotonic()
+                        pid = self.peer_id_map.get(peer, peer)
+                        try:
+                            pid = self.peer_id_map.get(str(peer), pid)
+                        except Exception:
+                            pass
                         if success:
                             self._last_seen[peer] = now
-                            self._degraded.discard(peer)
+                            self._degraded.discard(pid)
                         else:
                             last = self._last_seen.get(peer)
                             if last is None:
                                 self._last_seen[peer] = now
                                 last = now
                             if now - last >= threshold:
-                                self._degraded.add(peer)
+                                self._degraded.add(pid)
                     # step-down if higher term reported
                     if success and term_resp:
                         try:

@@ -6,6 +6,7 @@ by ``log_event`` and by the formatter so that no payload bytes or tokens
 ever reach the logs.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -116,10 +117,6 @@ class JsonFormatter(logging.Formatter):
                                    "node": obj.get("node")})
 
 
-class _JsonLogger(logging.Logger):
-    pass
-
-
 def get_logger(name):
     """Return a logger emitting JSON lines to stdout."""
     logger = logging.getLogger(name)
@@ -142,8 +139,6 @@ def log_event(logger, msg, level=logging.INFO, **fields):
         logger.log(level, msg, extra=safe_fields)
     except Exception:
         # Last-resort: never crash the caller because of logging.
-        try:
+        with contextlib.suppress(Exception):
             logger.log(level, msg)
-        except Exception:
-            pass
     return None

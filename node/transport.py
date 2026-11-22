@@ -5,10 +5,12 @@ import sys
 
 try:
     import grpc
+
     from gen import kv_pb2, kv_pb2_grpc
 except Exception:  # pragma: no cover
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     import grpc
+
     from gen import kv_pb2, kv_pb2_grpc
 
 
@@ -40,7 +42,7 @@ class GrpcTransport:
         token = self._token()
         if not token:
             return None
-        return [("authorization", "Bearer %s" % token)]
+        return [("authorization", f"Bearer {token}")]
 
     def _stub(self, peer_id):
         if peer_id in self._stubs:

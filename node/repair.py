@@ -5,26 +5,27 @@ shards reconstructed from the decoded value. Missing or corrupt shards are
 rebuilt by scheduling a best-effort background ``StoreShard`` to their owner.
 """
 
+import contextlib
 import threading
 import time
-from typing import Any, Callable, List, Optional, Sequence
 
 try:
-    from node.encode import RS32Engine, ReplicationEngine
+    from node.encode import ReplicationEngine, RS32Engine
 except Exception:  # pragma: no cover - alternate import paths
     try:
-        from encode import RS32Engine, ReplicationEngine  # type: ignore
+        from encode import ReplicationEngine, RS32Engine  # type: ignore
     except Exception:
         try:
-            import os as _os, sys as _sys
+            import os as _os
+            import sys as _sys
             _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-            from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+            from node.encode import ReplicationEngine, RS32Engine  # type: ignore
         except Exception:
             RS32Engine = None  # type: ignore
             ReplicationEngine = None  # type: ignore
 
 
-def read_repair(engine, shards, canonical_shards, owners, transport, key, version, log=print) -> List[int]:
+def read_repair(engine, shards, canonical_shards, owners, transport, key, version, log=print) -> list[int]:
     shards = list(shards) if shards is not None else []
     canonical_shards = list(canonical_shards) if canonical_shards is not None else []
     n = max(len(shards), len(canonical_shards), 5)
@@ -39,7 +40,7 @@ def read_repair(engine, shards, canonical_shards, owners, transport, key, versio
         while len(owners) < n:
             owners.append(None)
 
-    repaired: List[int] = []
+    repaired: list[int] = []
     for i in range(n):
         if i >= len(canonical_shards) or canonical_shards[i] is None:
             continue
@@ -47,7 +48,8 @@ def read_repair(engine, shards, canonical_shards, owners, transport, key, versio
             repaired.append(i)
             canonical = bytes(canonical_shards[i])
 
-            def _do(idx=i, owner=owners[i] if i < len(owners) else None, data=canonical):
+            def _do(idx=i, data=canonical):
+                owner = owners[idx] if idx < len(owners) else None
                 try:
                     if owner is None or transport is None:
                         return
@@ -58,18 +60,14 @@ def read_repair(engine, shards, canonical_shards, owners, transport, key, versio
                 except Exception:
                     pass
 
-            try:
-                log("read-repair: rebuilt shard %d" % i)
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                log(f"read-repair: rebuilt shard {i}")
             try:
                 t = threading.Thread(target=_do, daemon=True)
                 t.start()
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     _do()
-                except Exception:
-                    pass
 
     return repaired
 
@@ -87,10 +85,8 @@ class RepairSweeper:
         self.stop_event = stop_event
         self.log = log if log is not None else print
         for k, v in (kwargs or {}).items():
-            try:
+            with contextlib.suppress(Exception):
                 setattr(self, k, v)
-            except Exception:
-                pass
 
     def run(self):
         while not self.stop_event.is_set():
@@ -101,10 +97,8 @@ class RepairSweeper:
                 time.sleep(0)
             if self.stop_event.is_set():
                 break
-            try:
+            with contextlib.suppress(Exception):
                 self.sweep_once()
-            except Exception:
-                pass
 
     def sweep_once(self):
         try:
@@ -155,20 +149,14 @@ class RepairSweeper:
                 if i >= len(canonical):
                     continue
                 if shards[i] is None or shards[i] != canonical[i]:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.transport.store_shard(owner, key, i, version, canonical[i])
-                    except Exception:
-                        pass
-                    try:
-                        self.log("sweep: refilled shard %d on %s" % (i, owner))
-                    except Exception:
-                        pass
+                    with contextlib.suppress(Exception):
+                        self.log(f"sweep: refilled shard {i} on {owner}")
 
     def stop(self):
-        try:
+        with contextlib.suppress(Exception):
             self.stop_event.set()
-        except Exception:
-            pass
 
 
 def _collect_keys(transport, peers=None):
@@ -182,10 +170,8 @@ def _collect_keys(transport, peers=None):
         try:
             keys.update(transport.list_keys(peer) or [])
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 keys.update(transport.ListKeys(peer) or [])
-            except Exception:
-                pass
     return keys
 
 
@@ -204,10 +190,8 @@ def _fetch_shard(transport, peer, key, shard_index):
         except Exception:
             data = None
     if data is not None:
-        try:
+        with contextlib.suppress(Exception):
             data = bytes(data)
-        except Exception:
-            pass
     return data
 
 
@@ -259,10 +243,8 @@ def _reconstruct_missing(node_id, node_index, key, idx, version, mode, owners, t
                 except Exception:
                     stored = False
             if stored:
-                try:
-                    log("sync pulled shard %d for %s" % (idx, key))
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    log(f"sync pulled shard {idx} for {key}")
             return stored
     except Exception:
         return False
@@ -366,20 +348,16 @@ def sync_on_start(node_id, node_index, storage, transport, log=print):
             if stored:
                 count += 1
                 pulled = True
-                try:
-                    log("sync pulled shard %d for %s" % (idx, key))
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    log(f"sync pulled shard {idx} for {key}")
                 break
         if not pulled and owners:
             stored = _reconstruct_missing(node_id, node_index, key, idx, version, mode, owners, transport, peers, storage, log=log)
             if stored:
                 count += 1
 
-    try:
-        log("sync pulled %d shards" % count)
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        log(f"sync pulled {count} shards")
     return count
 
 

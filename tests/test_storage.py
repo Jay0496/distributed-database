@@ -97,9 +97,9 @@ def test_concurrent_writes(tmp_path):
     def worker(i):
         try:
             for j in range(5):
-                s.append_log(1, ("t%d-%d" % (i, j)).encode())
-                s.set_raft_state("k%d" % i, str(j))
-                s.store_shard("key%d" % i, j % 3, 1, ("b%d%d" % (i, j)).encode())
+                s.append_log(1, (f"t{i}-{j}").encode())
+                s.set_raft_state(f"k{i}", str(j))
+                s.store_shard(f"key{i}", j % 3, 1, (f"b{i}{j}").encode())
         except Exception as e:
             errors.append(e)
 

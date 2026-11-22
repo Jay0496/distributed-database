@@ -8,8 +8,8 @@ import pytest
 try:
     import gen.kv_pb2 as kv_pb2
     import gen.kv_pb2_grpc as kv_pb2_grpc
-    from node.raft import RaftNode
     from node.auth import AuthInterceptor
+    from node.raft import RaftNode
     from node.server import NodeService
     from node.storage import Storage
 except Exception:
@@ -59,7 +59,7 @@ def auth_server(tmp_path, monkeypatch):
 
 def test_missing_token_rejected(auth_server):
     port, storage, raft, server = auth_server
-    channel = grpc.insecure_channel("localhost:%d" % port)
+    channel = grpc.insecure_channel(f"localhost:{port}")
     stub = kv_pb2_grpc.KVStub(channel)
     with pytest.raises(grpc.RpcError) as exc:
         stub.Heartbeat(kv_pb2.HeartbeatRequest())
@@ -69,7 +69,7 @@ def test_missing_token_rejected(auth_server):
 
 def test_wrong_token_rejected(auth_server):
     port, storage, raft, server = auth_server
-    channel = grpc.insecure_channel("localhost:%d" % port)
+    channel = grpc.insecure_channel(f"localhost:{port}")
     stub = kv_pb2_grpc.KVStub(channel)
     with pytest.raises(grpc.RpcError) as exc:
         stub.Heartbeat(
@@ -82,7 +82,7 @@ def test_wrong_token_rejected(auth_server):
 
 def test_correct_token_accepted(auth_server):
     port, storage, raft, server = auth_server
-    channel = grpc.insecure_channel("localhost:%d" % port)
+    channel = grpc.insecure_channel(f"localhost:{port}")
     stub = kv_pb2_grpc.KVStub(channel)
     resp = stub.Heartbeat(
         kv_pb2.HeartbeatRequest(),
@@ -102,7 +102,7 @@ def test_correct_token_accepted(auth_server):
 def test_no_auth_when_token_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("TOKEN", raising=False)
     port, storage, raft, server = _start_node(tmp_path, None)
-    channel = grpc.insecure_channel("localhost:%d" % port)
+    channel = grpc.insecure_channel(f"localhost:{port}")
     stub = kv_pb2_grpc.KVStub(channel)
     # No header required.
     resp = stub.Heartbeat(kv_pb2.HeartbeatRequest())

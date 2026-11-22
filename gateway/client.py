@@ -1,5 +1,6 @@
 """Gateway client: leader discovery with retry."""
 
+import contextlib
 import os
 import sys
 import time
@@ -92,7 +93,7 @@ class GatewayClient:
         token = self._auth_token()
         if not token:
             return None
-        return [("authorization", "Bearer %s" % token)]
+        return [("authorization", f"Bearer {token}")]
 
     def _call_get_leader(self, addr):
         stub = self._stub(addr)
@@ -142,16 +143,16 @@ class GatewayClient:
                 if resp is not None:
                     responses.append((addr, resp))
             counts = {}
-            for addr, resp in responses:
-                l = getattr(resp, "leader", "") or ""
-                if l:
-                    counts[l] = counts.get(l, 0) + 1
+            for _addr, resp in responses:
+                leader = getattr(resp, "leader", "") or ""
+                if leader:
+                    counts[leader] = counts.get(leader, 0) + 1
             if counts:
                 leader_id = max(counts.items(), key=lambda kv: kv[1])[0]
                 self._leader_id = leader_id
                 self._leader_addr = self._map_leader_to_addr(leader_id)
                 self._leader = self._leader_addr
-                for addr, resp in responses:
+                for _addr, resp in responses:
                     if (getattr(resp, "leader", "") or "") == leader_id:
                         self._last_resp = resp
                         break
@@ -313,10 +314,8 @@ class GatewayClient:
                 self._leader_id = None
                 self._leader_addr = None
                 self._leader = None
-                try:
+                with contextlib.suppress(Exception):
                     self.discover_leader()
-                except Exception:
-                    pass
                 time.sleep(0.05 * (attempt + 1))
         if last_exc is not None:
             raise last_exc

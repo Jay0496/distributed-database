@@ -1,5 +1,6 @@
 """Per-node durable SQLite store."""
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -54,10 +55,8 @@ class Storage:
 
     def close(self) -> None:
         with self._lock:
-            try:
+            with contextlib.suppress(sqlite3.Error):
                 self._conn.commit()
-            except sqlite3.Error:
-                pass
             self._conn.close()
 
     # ---- raft state ----

@@ -1,3 +1,4 @@
+import contextlib
 import os
 import sys
 import time
@@ -5,14 +6,14 @@ import time
 import pytest
 
 try:
-    from node.storage import Storage
-    from node.raft import RaftNode, DirectTransport
+    from node.raft import DirectTransport, RaftNode
     from node.server import NodeService
+    from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from node.storage import Storage  # type: ignore
-    from node.raft import RaftNode, DirectTransport  # type: ignore
+    from node.raft import DirectTransport, RaftNode  # type: ignore
     from node.server import NodeService  # type: ignore
+    from node.storage import Storage  # type: ignore
 
 
 @pytest.fixture
@@ -55,12 +56,8 @@ def cluster(tmp_path):
     yield ids, nodes, storages, services, leader_id, transport
     # teardown
     for nd in nodes.values():
-        try:
+        with contextlib.suppress(Exception):
             nd.stop()
-        except Exception:
-            pass
     for st in storages.values():
-        try:
+        with contextlib.suppress(Exception):
             st.close()
-        except Exception:
-            pass

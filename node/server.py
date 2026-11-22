@@ -1,6 +1,6 @@
 """gRPC KV service implementation for a distributed database node."""
 
-import hmac
+import contextlib
 import os
 import sys
 
@@ -143,16 +143,12 @@ class NodeService(kv_pb2_grpc.KVServicer):
             return list(self.degraded or [])
 
     def mark_degraded(self, peer):
-        try:
+        with contextlib.suppress(Exception):
             self.degraded.add(peer)
-        except Exception:
-            pass
 
     def clear_degraded(self, peer):
-        try:
+        with contextlib.suppress(Exception):
             self.degraded.discard(peer)
-        except Exception:
-            pass
 
     def start_failure_detector(self):
         if getattr(self, "raft", None) is not None and hasattr(self.raft, "start_failure_detector"):
@@ -287,10 +283,8 @@ class NodeService(kv_pb2_grpc.KVServicer):
                 return kv_pb2.PutResponse(ok=True, version=version)
             except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))
-        try:
+        with contextlib.suppress(Exception):
             self.storage.set_raft_state("default_mode", mode)
-        except Exception:
-            pass
         return kv_pb2.PutResponse(ok=True, version=1)
 
     def Get(self, request, context):
@@ -388,9 +382,8 @@ class NodeService(kv_pb2_grpc.KVServicer):
         import hashlib
         if len(decoded) != size:
             return kv_pb2.GetResponse(value=b"", found=False, error="size mismatch")
-        if checksum is not None and checksum != "":
-            if hashlib.sha256(decoded).hexdigest() != str(checksum):
-                return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
+        if checksum is not None and checksum != "" and hashlib.sha256(decoded).hexdigest() != str(checksum):
+            return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
 
         # Read repair: rebuild missing/corrupt shards in the background.
         try:
@@ -447,10 +440,8 @@ class NodeService(kv_pb2_grpc.KVServicer):
             except Exception as exc:  # pragma: no cover
                 return kv_pb2.SetModeResponse(ok=False, mode=mode, error=str(exc))
             return kv_pb2.SetModeResponse(ok=True, mode=mode)
-        try:
+        with contextlib.suppress(Exception):
             self.storage.set_raft_state("default_mode", mode)
-        except Exception:
-            pass
         return kv_pb2.SetModeResponse(ok=True, mode=mode)
 
     def _normalize_degraded_id(self, peer):
@@ -528,17 +519,17 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.RequestVoteResponse(term=int(term), vote_granted=bool(granted))
 
 # Backward-compat re-exports.
-try:
-    from node.transport import GrpcTransport
+try:  # noqa: SIM105
+    from node.transport import GrpcTransport  # noqa: F401
 except Exception:  # pragma: no cover
-    try:
-        from transport import GrpcTransport  # type: ignore
+    try:  # noqa: SIM105
+        from transport import GrpcTransport  # type: ignore  # noqa: F401
     except Exception:
         pass
-try:
-    from node.auth import AuthInterceptor
+try:  # noqa: SIM105
+    from node.auth import AuthInterceptor  # noqa: F401
 except Exception:  # pragma: no cover
-    try:
+    try:  # noqa: SIM105
         from auth import AuthInterceptor  # type: ignore
     except Exception:
         pass

@@ -1,6 +1,7 @@
 """Node entrypoint."""
 
 import argparse
+import contextlib
 import os
 import signal
 import sys
@@ -41,10 +42,8 @@ except Exception:  # pragma: no cover - alternate import path
             return logging.getLogger(name)
 
         def log_event(logger, msg, **fields):  # type: ignore
-            try:
+            with contextlib.suppress(Exception):
                 logger.info(msg)
-            except Exception:
-                pass
 
 
 def parse_peers(raw):
@@ -100,10 +99,8 @@ def main() -> None:
             _node_index = 0
 
         def _sync():
-            try:
+            with contextlib.suppress(Exception):
                 sync_on_start(args.id, _node_index, storage, transport, log=logger.info)
-            except Exception:
-                pass
 
         threading.Thread(target=_sync, daemon=True, name=f"sync-{args.id}").start()
     except Exception:
@@ -135,31 +132,19 @@ def main() -> None:
 
     stop_event.wait()
 
-    try:
+    with contextlib.suppress(Exception):
         sweeper.stop()
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         sweeper_thread.join(timeout=2.0)
-    except Exception:
-        pass
 
-    try:
+    with contextlib.suppress(Exception):
         raft.stop()
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         server.stop(grace=5)
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         storage.close()
-    except Exception:
-        pass
-    try:
+    with contextlib.suppress(Exception):
         transport.close()
-    except Exception:
-        pass
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Raft consensus node (election + log replication)."""
 
+import contextlib
 import json
 import random
 import threading
@@ -45,7 +46,6 @@ _INTERVAL_LEGACY = {
     "degraded_check_interval", "heartbeat_failure_interval", "failure_detection_interval",
     "detection_interval", "ping_interval", "detector_heartbeat_interval",
     "heartbeat_interval_detection", "failure_detector_interval",
-    "HEARTBEAT_INTERVAL_FAILURE",
 }
 _THRESHOLD_LEGACY = {
     "degraded_threshold", "degraded_after", "degraded_timeout",
@@ -128,16 +128,12 @@ class RaftNode:
         self.heartbeat_timeout = float(heartbeat_rpc_timeout)
         self.ping_timeout = float(heartbeat_rpc_timeout)
         for k, v in (kwargs or {}).items():
-            try:
+            with contextlib.suppress(Exception):
                 setattr(self, k, v)
-            except Exception:
-                pass
         # alias support
         if getattr(self, "peers_ids", None) and not getattr(self, "peer_ids", None):
-            try:
+            with contextlib.suppress(Exception):
                 self.peer_ids = list(self.peers_ids)
-            except Exception:
-                pass
         if not getattr(self, "peer_ids", None):
             self.peer_ids = list(self.peers)
         if len(self.peer_ids) != len(self.peers):
@@ -187,15 +183,11 @@ class RaftNode:
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
         if name in _INTERVAL_LEGACY and name != "failure_interval":
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 super().__setattr__("failure_interval", float(value))
-            except (TypeError, ValueError):
-                pass
         if name in _THRESHOLD_LEGACY and name != "failure_threshold":
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 super().__setattr__("failure_threshold", float(value))
-            except (TypeError, ValueError):
-                pass
 
     def __getattr__(self, name):
         # Shim for legacy alias names.
@@ -256,10 +248,8 @@ class RaftNode:
             if self.last_applied < len(self.log):
                 entry = self.log[self.last_applied]
                 if self.apply_fn is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.apply_fn(entry)
-                    except Exception:
-                        pass
         if self.commit_index <= self.last_log_index():
             self.last_applied = self.commit_index
         else:
@@ -287,7 +277,7 @@ class RaftNode:
             return
         op = obj.get("op")
         if op == "put":
-            try:
+            with contextlib.suppress(Exception):
                 self.storage.upsert_meta(
                     str(obj.get("key")),
                     str(obj.get("mode", "")),
@@ -296,27 +286,19 @@ class RaftNode:
                     str(obj.get("checksum", "")),
                     list(obj.get("owners", [])) if obj.get("owners", []) is not None else [],
                 )
-            except Exception:
-                pass
         elif op == "mode":
-            try:
+            with contextlib.suppress(Exception):
                 self.storage.set_raft_state("default_mode", str(obj.get("mode")))
-            except Exception:
-                pass
         elif op == "noop":
             pass
 
     def _apply_entry(self, entry) -> None:
         if self.storage is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._default_apply(entry)
-            except Exception:
-                pass
         if self._user_apply_fn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._user_apply_fn(entry)
-            except Exception:
-                pass
 
     def _persist_term(self) -> None:
         self._persist_state()
@@ -353,10 +335,8 @@ class RaftNode:
     def _persist_truncate(self, idx: int) -> None:
         if self.storage is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self.storage.truncate_log(idx)
-        except Exception:
-            pass
 
     def last_log_index(self) -> int:
         if not self.log:
@@ -638,10 +618,8 @@ class RaftNode:
                     with self._degraded_lock:
                         now = time.monotonic()
                         pid = self.peer_id_map.get(peer, peer)
-                        try:
+                        with contextlib.suppress(Exception):
                             pid = self.peer_id_map.get(str(peer), pid)
-                        except Exception:
-                            pass
                         if success:
                             self._last_seen[peer] = now
                             self._degraded.discard(pid)
@@ -697,10 +675,8 @@ class RaftNode:
         if t is not None and t.is_alive():
             t.join(timeout=2.0)
         self._thread = None
-        try:
+        with contextlib.suppress(KeyError):
             del _NODE_REGISTRY[self.node_id]
-        except KeyError:
-            pass
 
     def is_leader(self) -> bool:
         with self._lock:
@@ -815,10 +791,8 @@ class RaftNode:
             if self.last_applied < len(self.log):
                 entry = self.log[self.last_applied]
                 if self.apply_fn is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         self.apply_fn(entry)
-                    except Exception:
-                        pass
 
     def _advance_commit_index(self) -> None:
         with self._lock:
@@ -913,7 +887,7 @@ class RaftNode:
         with self._lock:
             if self.state != self.CANDIDATE or self.current_term != term:
                 return
-            for peer, pt, granted in results:
+            for _peer, pt, _granted in results:
                 if pt > self.current_term:
                     self.current_term = pt
                     self.voted_for = None
@@ -929,10 +903,8 @@ class RaftNode:
                 self._leader_id = self.node_id
                 self.next_index = {p: self.last_log_index() + 1 for p in self.peers}
                 self.match_index = {p: 0 for p in self.peers}
-                try:
+                with contextlib.suppress(Exception):
                     self.start_failure_detector()
-                except Exception:
-                    pass
             self._reset_election_timer()
 
         if self.is_leader():
@@ -942,10 +914,8 @@ class RaftNode:
         if not self.is_leader():
             return
         for p in list(self.peers):
-            try:
+            with contextlib.suppress(Exception):
                 self._replicate_once(p)
-            except Exception:
-                pass
 
     def _replicate_once(self, peer: str) -> None:
         max_attempts = 3
@@ -1135,14 +1105,10 @@ class DirectTransport:
                         return False, "", 0
                 except Exception:
                     pass
-                try:
+                with contextlib.suppress(Exception):
                     lid = r.leader_id() if hasattr(r, "leader_id") else lid
-                except Exception:
-                    pass
-                try:
+                with contextlib.suppress(Exception):
                     cur_term = int(r.current_term)
-                except Exception:
-                    pass
             return True, (lid if lid is not None else ""), int(cur_term or 0)
         except Exception:
             return False, "", 0

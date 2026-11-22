@@ -1,5 +1,6 @@
 """gRPC auth interceptor."""
 
+import contextlib
 import hmac
 import os
 import sys
@@ -80,10 +81,8 @@ class AuthInterceptor(grpc.ServerInterceptor):
 
         if not ok:
             def _abort(request, context):
-                try:
+                with contextlib.suppress(Exception):
                     context.abort(grpc.StatusCode.UNAUTHENTICATED, "unauthenticated")
-                except Exception:
-                    pass
 
             return grpc.unary_unary_rpc_method_handler(_abort)
 

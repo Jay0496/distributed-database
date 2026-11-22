@@ -2,8 +2,6 @@ import os
 import sys
 import time
 
-import pytest
-
 try:
     import gen.kv_pb2 as kv_pb2
 except Exception:

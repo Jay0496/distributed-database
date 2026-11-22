@@ -1,3 +1,4 @@
+import contextlib
 import os
 import sys
 import time
@@ -23,10 +24,8 @@ def make_cluster(n=5, timeout_range=(0.15, 0.30)):
 
 def cleanup(nodes):
     for n in nodes.values():
-        try:
+        with contextlib.suppress(Exception):
             n.stop()
-        except Exception:
-            pass
 
 
 def test_election_converges_single_leader():
@@ -72,7 +71,6 @@ def test_no_split_brain_sampled():
             n.start()
         # sample over ~1s
         seen_leaders = set()
-        max_concurrent = 0
         end = time.monotonic() + 1.0
         while time.monotonic() < end:
             cur = [nid for nid, n in nodes.items() if n.is_leader()]

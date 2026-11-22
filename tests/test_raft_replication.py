@@ -1,3 +1,4 @@
+import contextlib
 import os
 import sys
 import time
@@ -26,10 +27,8 @@ def make_cluster(n=5, timeout_range=(0.15, 0.30)):
 
 def cleanup(nodes):
     for n in nodes.values():
-        try:
+        with contextlib.suppress(Exception):
             n.stop()
-        except Exception:
-            pass
 
 
 def find_leader(nodes):

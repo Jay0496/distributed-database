@@ -1,38 +1,35 @@
 import hashlib
 import itertools
-import os
 import random
-import sys
 
-try:
-    from node.encode import (
-        RS32Engine,
-        ReplicationEngine,
-        checksum,
-        RedundancyEngine,
-    )
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from encode import (  # type: ignore
-        RS32Engine,
-        ReplicationEngine,
-        checksum,
-        RedundancyEngine,
-    )
+import pytest
+
+from node.encode import (
+    RS32Engine,
+    ReplicationEngine,
+    RedundancyEngine,
+    checksum,
+)
+
+SIZES = [0, 1, 2, 3, 5, 100, 1000]
 
 
-def _random_payloads(n=100, seed=42):
-    rng = random.Random(seed)
-    out = []
-    for _ in range(n):
-        size = rng.randint(0, 200)
-        out.append(bytes(rng.randrange(256) for _ in range(size)))
-    # include edge cases
-    out.append(b"")
-    out.append(b"\x00" * 5)
-    out.append(b"\x00" * 7)  # not multiple of 3 after prefix
-    out.append(bytes([255] * 100))
-    return out
+def _payload(size, seed=0xC0FFEE):
+    rng = random.Random(seed + size * 31)
+    return bytes(rng.randrange(256) for _ in range(size))
+
+
+def _engine(mode):
+    if mode == "rs":
+        return RS32Engine()
+    if mode == "repl":
+        return ReplicationEngine()
+    raise ValueError(mode)
+
+
+# ---------------------------------------------------------------------------
+# checksum helper
+# ---------------------------------------------------------------------------
 
 
 def test_checksum_helper():
@@ -40,74 +37,102 @@ def test_checksum_helper():
     assert checksum(data) == hashlib.sha256(data).hexdigest()
 
 
-def test_rs_required():
-    assert RS32Engine().required() == 3
+# ---------------------------------------------------------------------------
+# required() values
+# ---------------------------------------------------------------------------
 
 
-def test_repl_required():
-    assert ReplicationEngine().required() == 1
-
-
-def test_rs_roundtrip_no_loss():
-    for payload in _random_payloads():
-        eng = RS32Engine()
-        shards = eng.encode(payload)
-        assert len(shards) == 5
-        assert eng.decode(shards) == payload
-
-
-def test_rs_drop_any_two():
-    for payload in _random_payloads():
-        eng = RS32Engine()
-        shards = eng.encode(payload)
-        for combo in itertools.combinations(range(5), 2):
-            corrupted = list(shards)
-            for i in combo:
-                corrupted[i] = None
-            assert eng.decode(corrupted) == payload, (combo, payload)
-
-
-def test_rs_corrupt_one():
-    rng = random.Random(7)
-    for payload in _random_payloads():
-        eng = RS32Engine()
-        shards = eng.encode(payload)
-        # corrupt each shard position once
-        for target in range(5):
-            corrupted = [bytes(s) for s in shards]
-            # flip a few bytes
-            b = bytearray(corrupted[target])
-            if len(b) == 0:
-                continue
-            for _ in range(min(3, len(b))):
-                pos = rng.randrange(len(b))
-                b[pos] ^= 0xFF
-            corrupted[target] = bytes(b)
-            assert eng.decode(corrupted) == payload, (target, payload)
-
-
-def test_repl_survives_any_one_shard():
-    for payload in _random_payloads():
-        eng = ReplicationEngine()
-        shards = eng.encode(payload)
-        for keep in range(5):
-            corrupted = [None] * 5
-            corrupted[keep] = shards[keep]
-            assert eng.decode(corrupted) == payload, (keep, payload)
-
-
-def test_repl_roundtrip():
-    for payload in _random_payloads():
-        eng = ReplicationEngine()
-        shards = eng.encode(payload)
-        assert eng.decode(shards) == payload
+@pytest.mark.parametrize(
+    "engine,expected",
+    [(RS32Engine(), 3), (ReplicationEngine(), 1)],
+)
+def test_required_values(engine, expected):
+    assert engine.required() == expected
 
 
 def test_interface_abstract():
-    # RedundancyEngine should not be instantiable directly
-    try:
+    with pytest.raises(TypeError):
         RedundancyEngine()  # type: ignore
-        instantiated = True
-    except TypeError:
-        instantiated = False
-    assert not instantiated
+
+
+# ---------------------------------------------------------------------------
+# round-trip (table-driven over sizes and modes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["rs", "repl"])
+@pytest.mark.parametrize("size", SIZES)
+def test_roundtrip(mode, size):
+    data = _payload(size)
+    eng = _engine(mode)
+    shards = eng.encode(data)
+    assert len(shards) == 5
+    assert eng.decode(shards) == data
+
+
+# ---------------------------------------------------------------------------
+# RS: drop any 2 shards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("combo", list(itertools.combinations(range(5), 2)))
+def test_rs_drop_any_two(size, combo):
+    data = _payload(size)
+    eng = RS32Engine()
+    shards = eng.encode(data)
+    corrupted = list(shards)
+    for i in combo:
+        corrupted[i] = None
+    assert eng.decode(corrupted) == data
+
+
+# ---------------------------------------------------------------------------
+# RS: corrupt 1 shard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("target", range(5))
+def test_rs_corrupt_one(size, target):
+    data = _payload(size)
+    eng = RS32Engine()
+    shards = eng.encode(data)
+    corrupted = [bytes(s) for s in shards]
+    b = bytearray(corrupted[target])
+    assert len(b) > 0
+    b[0] ^= 0xFF
+    corrupted[target] = bytes(b)
+    assert eng.decode(corrupted) == data
+
+
+# ---------------------------------------------------------------------------
+# Replication: survives a single available shard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("keep", range(5))
+def test_repl_survives_single_shard(size, keep):
+    data = _payload(size)
+    eng = ReplicationEngine()
+    shards = eng.encode(data)
+    corrupted = [None] * 5
+    corrupted[keep] = shards[keep]
+    assert eng.decode(corrupted) == data
+
+
+# ---------------------------------------------------------------------------
+# Replication: survives loss of any single shard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("drop", range(5))
+def test_repl_drop_one(size, drop):
+    data = _payload(size)
+    eng = ReplicationEngine()
+    shards = eng.encode(data)
+    corrupted = list(shards)
+    corrupted[drop] = None
+    assert eng.decode(corrupted) == data

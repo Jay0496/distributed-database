@@ -1164,6 +1164,22 @@ class DirectTransport:
         except Exception:
             return False
 
+    def list_keys(self, peer_id):
+        node = self._node(peer_id)
+        if node is None:
+            return []
+        try:
+            if hasattr(node, "storage") and node.storage is not None:
+                return list(node.storage.list_meta_keys())
+        except Exception:
+            pass
+        try:
+            if hasattr(node, "list_meta_keys"):
+                return list(node.list_meta_keys())
+        except Exception:
+            pass
+        return []
+
     def heartbeat(self, peer_id, node_id="", term=0):
         node = self._node(peer_id)
         if node is None:

@@ -62,6 +62,29 @@ def main() -> None:
     server.start()
     print("listening", flush=True)
 
+    # Startup sync: pull shards this node should own after Raft recovery.
+    try:
+        try:
+            from node.repair import sync_on_start
+        except Exception:  # pragma: no cover - alternate import path
+            from repair import sync_on_start  # type: ignore
+        try:
+            _node_index = int(str(args.id).replace("node", "")) - 1
+        except Exception:
+            _node_index = 0
+        if _node_index < 0:
+            _node_index = 0
+
+        def _sync():
+            try:
+                sync_on_start(args.id, _node_index, storage, transport, log=print)
+            except Exception:
+                pass
+
+        threading.Thread(target=_sync, daemon=True, name=f"sync-{args.id}").start()
+    except Exception:
+        pass
+
     stop_event = threading.Event()
 
     # Start background repair sweeper.

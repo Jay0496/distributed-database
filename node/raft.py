@@ -1,5 +1,6 @@
 """Raft consensus node (election + log replication)."""
 
+import json
 import random
 import threading
 import time
@@ -52,6 +53,7 @@ class RaftNode:
 
         self.log: List[RaftLogEntry] = [RaftLogEntry(term=0, index=0, command=b"")]
         self.apply_fn: Optional[Callable[[RaftLogEntry], None]] = None
+        self._user_apply_fn: Optional[Callable[[RaftLogEntry], None]] = None
         self.next_index: Dict[str, int] = {}
         self.match_index: Dict[str, int] = {}
 
@@ -101,6 +103,61 @@ class RaftNode:
             except Exception:
                 pass
             self.last_applied = 0
+            if self.apply_fn is None and self.storage is not None:
+                self.apply_fn = self._apply_entry
+
+    def _default_apply(self, entry) -> None:
+        if self.storage is None:
+            return
+        cmd = getattr(entry, "command", b"")
+        if isinstance(cmd, str):
+            cmd = cmd.encode()
+        elif not isinstance(cmd, (bytes, bytearray)):
+            try:
+                cmd = bytes(cmd) if cmd is not None else b""
+            except Exception:
+                cmd = b""
+        cmd = bytes(cmd) if cmd is not None else b""
+        if not cmd:
+            return
+        try:
+            obj = json.loads(cmd.decode("utf-8"))
+        except Exception:
+            return
+        if not isinstance(obj, dict):
+            return
+        op = obj.get("op")
+        if op == "put":
+            try:
+                self.storage.upsert_meta(
+                    str(obj.get("key")),
+                    str(obj.get("mode", "")),
+                    int(obj.get("version", 0)),
+                    int(obj.get("size", 0)),
+                    str(obj.get("checksum", "")),
+                    list(obj.get("owners", [])) if obj.get("owners", []) is not None else [],
+                )
+            except Exception:
+                pass
+        elif op == "mode":
+            try:
+                self.storage.set_raft_state("default_mode", str(obj.get("mode")))
+            except Exception:
+                pass
+        elif op == "noop":
+            pass
+
+    def _apply_entry(self, entry) -> None:
+        if self.storage is not None:
+            try:
+                self._default_apply(entry)
+            except Exception:
+                pass
+        if self._user_apply_fn is not None:
+            try:
+                self._user_apply_fn(entry)
+            except Exception:
+                pass
 
     def _persist_term(self) -> None:
         if self.storage is None:
@@ -333,7 +390,11 @@ class RaftNode:
 
     def set_apply_callback(self, fn) -> None:
         with self._lock:
-            self.apply_fn = fn
+            self._user_apply_fn = fn
+            if self.storage is not None or fn is not None:
+                self.apply_fn = self._apply_entry
+            else:
+                self.apply_fn = None
             self._apply_committed_locked()
 
     def _apply_committed_locked(self) -> None:

@@ -231,6 +231,9 @@ class GatewayClient:
         def _do(stub):
             resp = stub.Get(kv_pb2.GetRequest(key=key), timeout=2.0)
             if not getattr(resp, "found", False):
+                err = getattr(resp, "error", "") or ""
+                if err and err != "not found":
+                    raise RuntimeError(err)
                 return None
             return bytes(getattr(resp, "value", b"") or b"")
 

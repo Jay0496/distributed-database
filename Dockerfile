@@ -9,4 +9,4 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 FROM base AS test
-CMD ["pytest", "-q"]
+CMD ["sh", "-c", "ruff check . && pytest -q"]

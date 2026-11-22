@@ -35,6 +35,14 @@ def main(argv=None) -> None:
     mode_p = sub.add_parser("mode")
     mode_p.add_argument("mode")
 
+    put_p = sub.add_parser("put")
+    put_p.add_argument("key")
+    put_p.add_argument("value")
+    put_p.add_argument("--mode", default=None)
+
+    get_p = sub.add_parser("get")
+    get_p.add_argument("key")
+
     args = parser.parse_args(argv)
     peers = _peers_from_args(args)
     client = GatewayClient(peers)
@@ -45,6 +53,20 @@ def main(argv=None) -> None:
     if args.command == "mode":
         ok = client.set_mode(args.mode)
         print(json.dumps({"ok": bool(ok), "mode": args.mode}))
+        return
+    if args.command == "put":
+        ok = client.put(args.key, args.value, mode=args.mode)
+        print(json.dumps({"ok": bool(ok)}))
+        return
+    if args.command == "get":
+        val = client.get(args.key)
+        if val is None:
+            print(json.dumps({"found": False}))
+        else:
+            try:
+                print(json.dumps({"found": True, "value": val.decode("utf-8", "replace")}))
+            except Exception:
+                print(json.dumps({"found": True}))
         return
     if args.command is None:
         parser.print_help()

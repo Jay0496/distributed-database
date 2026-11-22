@@ -1,7 +1,6 @@
 """Raft consensus node (election + log replication)."""
 
 import contextlib
-import random
 import threading
 import time
 from collections.abc import Callable
@@ -51,14 +50,11 @@ _THRESHOLD_LEGACY = {
     "DEGRADED_TIMEOUT_SECONDS",
 }
 
+from .election import RaftElection  # noqa: E402
 from .persistence import RaftLogEntry, RaftPersistence  # noqa: E402
 
 
-class RaftNode(RaftPersistence):
-    FOLLOWER = "follower"
-    CANDIDATE = "candidate"
-    LEADER = "leader"
-
+class RaftNode(RaftPersistence, RaftElection):
     # Failure detection defaults (canonical only; legacy names via __getattr__)
     failure_interval = 1.0
     failure_threshold = 3.0
@@ -485,37 +481,6 @@ class RaftNode(RaftPersistence):
                 return self.node_id
             return self._leader_id
 
-    def handle_request_vote(
-        self, term, candidate_id, last_log_index, last_log_term
-    ):
-        with self._lock:
-            if term > self.current_term:
-                self.current_term = term
-                self.voted_for = None
-                self.state = self.FOLLOWER
-                self._leader_id = None
-                self._persist_state()
-                self._reset_election_timer()
-
-            if term < self.current_term:
-                return self.current_term, False
-
-            def log_ok():
-                my_term = self.last_log_term()
-                my_idx = self.last_log_index()
-                if last_log_term != my_term:
-                    return last_log_term > my_term
-                return last_log_index >= my_idx
-
-            granted = False
-            if (self.voted_for is None or self.voted_for == candidate_id) and log_ok():
-                self.voted_for = candidate_id
-                granted = True
-                self._persist_state()
-                self._reset_election_timer()
-
-            return self.current_term, granted
-
     def handle_append_entries(
         self, term, leader_id, prev_log_index, prev_log_term, entries, leader_commit
     ):
@@ -596,10 +561,6 @@ class RaftNode(RaftPersistence):
                 self._apply_committed_locked()
                 break
 
-    def _reset_election_timer(self) -> None:
-        timeout = random.uniform(*self.election_timeout_range)
-        self.election_deadline = time.monotonic() + timeout
-
     def _run(self) -> None:
         self._reset_election_timer()
         while self._running:
@@ -620,74 +581,6 @@ class RaftNode(RaftPersistence):
                 else:
                     wait = min(0.01, self.election_deadline - now)
                     time.sleep(wait if wait > 0 else 0.001)
-
-    def _start_election(self) -> None:
-        with self._lock:
-            if self.state == self.LEADER:
-                return
-            self.state = self.CANDIDATE
-            self.current_term += 1
-            self.voted_for = self.node_id
-            self._leader_id = None
-            term = self.current_term
-            self._persist_state()
-            self._reset_election_timer()
-
-        last_idx = self.last_log_index()
-        last_term = self.last_log_term()
-
-        req = {
-            "term": term,
-            "candidate_id": self.node_id,
-            "last_log_index": last_idx,
-            "last_log_term": last_term,
-        }
-
-        results = []
-        rlock = threading.Lock()
-
-        def worker(peer):
-            try:
-                pt, granted = self.transport.request_vote(peer, dict(req))
-                with rlock:
-                    results.append((peer, pt, granted))
-            except Exception:
-                with rlock:
-                    results.append((peer, term, False))
-
-        threads = []
-        for p in self.peers:
-            t = threading.Thread(target=worker, args=(p,), daemon=True)
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join(timeout=0.15)
-
-        with self._lock:
-            if self.state != self.CANDIDATE or self.current_term != term:
-                return
-            for _peer, pt, _granted in results:
-                if pt > self.current_term:
-                    self.current_term = pt
-                    self.voted_for = None
-                    self.state = self.FOLLOWER
-                    self._leader_id = None
-                    self._persist_state()
-                    self._reset_election_timer()
-                    return
-            votes = 1 + sum(1 for _, _, g in results if g)
-            majority = (len(self.peers) + 1) // 2 + 1
-            if votes >= majority:
-                self.state = self.LEADER
-                self._leader_id = self.node_id
-                self.next_index = {p: self.last_log_index() + 1 for p in self.peers}
-                self.match_index = {p: 0 for p in self.peers}
-                with contextlib.suppress(Exception):
-                    self.start_failure_detector()
-            self._reset_election_timer()
-
-        if self.is_leader():
-            self._send_heartbeats()
 
     def _replication_round(self) -> None:
         if not self.is_leader():

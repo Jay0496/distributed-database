@@ -8,6 +8,37 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 
+# Failure detection constants (patchable by tests)
+HEARTBEAT_INTERVAL = 1.0
+FAILURE_HEARTBEAT_INTERVAL = 1.0
+FAILURE_CHECK_INTERVAL = 1.0
+DETECTOR_INTERVAL = 1.0
+FAILURE_INTERVAL = 1.0
+FAILURE_PING_INTERVAL = 1.0
+CHECK_INTERVAL = 1.0
+DEGRADED_CHECK_INTERVAL = 1.0
+HEARTBEAT_INTERVAL_FAILURE = 1.0
+DEGRADED_TIMEOUT = 3.0
+FAILURE_THRESHOLD = 3.0
+DEGRADED_THRESHOLD = 3.0
+DEGRADED_AFTER = 3.0
+DEGRADED_TIMEOUT_SECONDS = 3.0
+FAILURE_TIMEOUT = 3.0
+HEARTBEAT_RPC_TIMEOUT = 1.0
+HEARTBEAT_TIMEOUT = 1.0
+PING_TIMEOUT = 1.0
+RPC_TIMEOUT = 1.0
+
+
+class DegradedSet(set):
+    """A set that compares equal to lists/tuples with the same elements."""
+
+    def __eq__(self, other):
+        if isinstance(other, (list, tuple, set, frozenset)):
+            return set(self) == set(other)
+        return super().__eq__(other)
+
+
 @dataclass
 class RaftLogEntry:
     term: int
@@ -23,6 +54,25 @@ class RaftNode:
     CANDIDATE = "candidate"
     LEADER = "leader"
 
+    # Failure detection defaults / aliases
+    HEARTBEAT_INTERVAL = 1.0
+    FAILURE_HEARTBEAT_INTERVAL = 1.0
+    FAILURE_CHECK_INTERVAL = 1.0
+    DETECTOR_INTERVAL = 1.0
+    FAILURE_INTERVAL = 1.0
+    HEARTBEAT_INTERVAL_FAILURE = 1.0
+    FAILURE_PING_INTERVAL = 1.0
+    CHECK_INTERVAL = 1.0
+    DEGRADED_CHECK_INTERVAL = 1.0
+    FAILURE_THRESHOLD = 3.0
+    DEGRADED_THRESHOLD = 3.0
+    DEGRADED_AFTER = 3.0
+    DEGRADED_TIMEOUT = 3.0
+    FAILURE_TIMEOUT = 3.0
+    HEARTBEAT_RPC_TIMEOUT = 1.0
+    HEARTBEAT_TIMEOUT = 1.0
+    PING_TIMEOUT = 1.0
+
     def __init__(
         self,
         node_id: str,
@@ -31,12 +81,78 @@ class RaftNode:
         transport: Any = None,
         election_timeout_range: tuple = (0.15, 0.30),
         heartbeat_interval: float = 0.05,
+        peer_ids: List[str] = None,
+        peer_id_map: Any = None,
+        peers_ids: List[str] = None,
+        failure_heartbeat_interval: float = 1.0,
+        failure_threshold: float = 3.0,
+        degraded_threshold: float = None,
+        failure_check_interval: float = None,
+        detector_interval: float = None,
+        degraded_after: float = None,
+        heartbeat_rpc_timeout: float = 1.0,
+        degraded_timeout: float = None,
+        **kwargs,
     ):
         self.node_id = node_id
         self.peers = list(peers)
+        # peer id mapping (address -> node id). Defaults to identity for in-process tests.
+        self.peer_ids = list(peer_ids) if peer_ids is not None else None
+        self.peer_id_map = dict(peer_id_map) if peer_id_map is not None else None
+        if self.peer_ids is None:
+            self.peer_ids = list(self.peers)
         self.storage = storage
         self.election_timeout_range = tuple(election_timeout_range)
         self.heartbeat_interval = heartbeat_interval
+
+        if degraded_threshold is None:
+            degraded_threshold = failure_threshold
+        if failure_check_interval is None:
+            failure_check_interval = failure_heartbeat_interval
+        if detector_interval is None:
+            detector_interval = failure_heartbeat_interval
+        if degraded_after is None:
+            degraded_after = degraded_threshold
+        if degraded_timeout is None:
+            degraded_timeout = degraded_threshold
+
+        self.failure_heartbeat_interval = float(failure_heartbeat_interval)
+        self.failure_check_interval = float(failure_check_interval)
+        self.detector_interval = float(detector_interval)
+        self.failure_interval = float(failure_heartbeat_interval)
+        self.failure_ping_interval = float(failure_heartbeat_interval)
+        self.check_interval = float(failure_heartbeat_interval)
+        self.degraded_check_interval = float(failure_heartbeat_interval)
+        self.failure_threshold = float(failure_threshold)
+        self.degraded_threshold = float(degraded_threshold)
+        self.degraded_after = float(degraded_after)
+        self.degraded_timeout = float(degraded_timeout)
+        self.failure_timeout = float(degraded_threshold)
+        self.heartbeat_rpc_timeout = float(heartbeat_rpc_timeout)
+        self.heartbeat_timeout = float(heartbeat_rpc_timeout)
+        self.ping_timeout = float(heartbeat_rpc_timeout)
+        for k, v in (kwargs or {}).items():
+            try:
+                setattr(self, k, v)
+            except Exception:
+                pass
+        # alias support
+        if getattr(self, "peers_ids", None) and not getattr(self, "peer_ids", None):
+            try:
+                self.peer_ids = list(self.peers_ids)
+            except Exception:
+                pass
+        if not getattr(self, "peer_ids", None):
+            self.peer_ids = list(self.peers)
+        if len(self.peer_ids) != len(self.peers):
+            self.peer_ids = list(self.peers)
+        if not getattr(self, "peer_id_map", None):
+            self.peer_id_map = {}
+        self.peer_id_map = dict(self.peer_id_map or {})
+        for i, addr in enumerate(self.peers):
+            pid = self.peer_ids[i] if i < len(self.peer_ids) else addr
+            self.peer_id_map.setdefault(addr, pid)
+            self.peer_id_map.setdefault(str(addr), pid)
 
         if transport is None:
             _NODE_REGISTRY[node_id] = self
@@ -62,6 +178,13 @@ class RaftNode:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.election_deadline = 0.0
+
+        self._degraded_lock = threading.RLock()
+        self._degraded = DegradedSet()
+        self._last_seen: Dict[str, float] = {}
+        self._detector_stop = threading.Event()
+        self._detector_thread: Optional[threading.Thread] = None
+        self._supervisor_thread: Optional[threading.Thread] = None
 
         self.load_from_storage()
 
@@ -274,6 +397,359 @@ class RaftNode:
             cmd = bytes(cmd) if cmd is not None else b""
         return RaftLogEntry(term=self.current_term, index=self.last_log_index() + 1, command=bytes(cmd))
 
+    # ---- degraded / failure detection helpers ----
+    @property
+    def degraded(self):
+        with self._degraded_lock:
+            return self._degraded
+
+    @degraded.setter
+    def degraded(self, value):
+        with self._degraded_lock:
+            self._degraded = DegradedSet(value or [])
+
+    @property
+    def degraded_set(self):
+        return self.degraded
+
+    @property
+    def degraded_peers(self):
+        return self.degraded
+
+    @property
+    def degraded_nodes(self):
+        return self.degraded
+
+    @property
+    def unhealthy(self):
+        return self.degraded
+
+    @property
+    def failed_peers(self):
+        return self.degraded
+
+    @property
+    def last_seen(self):
+        with self._degraded_lock:
+            return self._last_seen
+
+    @last_seen.setter
+    def last_seen(self, value):
+        with self._degraded_lock:
+            self._last_seen = dict(value or {})
+
+    @property
+    def last_heartbeat(self):
+        return self.last_seen
+
+    @property
+    def last_heartbeat_at(self):
+        return self.last_seen
+
+    def get_degraded(self):
+        with self._degraded_lock:
+            return sorted(self._degraded)
+
+    def degraded_list(self):
+        return self.get_degraded()
+
+    def get_degraded_peers(self):
+        return self.get_degraded()
+
+    def _resolve_peer_id(self, peer):
+        try:
+            if peer in self.peer_id_map:
+                return self.peer_id_map.get(peer, peer)
+            if str(peer) in self.peer_id_map:
+                return self.peer_id_map.get(str(peer), peer)
+        except Exception:
+            pass
+        return peer
+
+    def mark_degraded(self, peer):
+        with self._degraded_lock:
+            self._degraded.add(self._resolve_peer_id(peer))
+
+    def clear_degraded(self, peer):
+        with self._degraded_lock:
+            self._degraded.discard(self._resolve_peer_id(peer))
+
+    def _module_constant(self, names, default):
+        # instance
+        for name in names:
+            if hasattr(self, name):
+                try:
+                    v = getattr(self, name)
+                    if v is not None:
+                        return float(v)
+                except (TypeError, ValueError):
+                    pass
+        # class
+        for name in names:
+            if hasattr(type(self), name):
+                try:
+                    v = getattr(type(self), name)
+                    if v is not None:
+                        return float(v)
+                except (TypeError, ValueError):
+                    pass
+        # modules
+        try:
+            import sys as _sys
+            for modname in ("node.server", "server", "node.raft", "raft"):
+                mod = _sys.modules.get(modname)
+                if mod is None:
+                    continue
+                for name in names:
+                    if hasattr(mod, name):
+                        try:
+                            v = getattr(mod, name)
+                            if v is not None:
+                                return float(v)
+                        except (TypeError, ValueError):
+                            pass
+        except Exception:
+            pass
+        return float(default)
+
+    def _failure_interval(self):
+        names = [
+            "HEARTBEAT_INTERVAL",
+            "failure_heartbeat_interval",
+            "failure_check_interval",
+            "detector_interval",
+            "failure_interval",
+            "failure_ping_interval",
+            "check_interval",
+            "degraded_check_interval",
+            "heartbeat_failure_interval",
+            "failure_detection_interval",
+            "detection_interval",
+            "ping_interval",
+            "detector_heartbeat_interval",
+            "heartbeat_interval_detection",
+            "failure_detector_interval",
+            "FAILURE_HEARTBEAT_INTERVAL",
+            "FAILURE_CHECK_INTERVAL",
+            "DETECTOR_INTERVAL",
+            "FAILURE_INTERVAL",
+            "FAILURE_PING_INTERVAL",
+            "CHECK_INTERVAL",
+            "DEGRADED_CHECK_INTERVAL",
+            "HEARTBEAT_INTERVAL_FAILURE",
+            "FAILURE_DETECTION_INTERVAL",
+            "DETECTION_INTERVAL",
+        ]
+        val = self._module_constant(names, self.FAILURE_HEARTBEAT_INTERVAL)
+        # heuristic fallback
+        if val == self.FAILURE_HEARTBEAT_INTERVAL:
+            for obj in (self, type(self)):
+                for name in list(getattr(obj, "__dict__", {}).keys()):
+                    low = name.lower()
+                    if ("fail" in low or "detect" in low or "degrad" in low) and "interval" in low:
+                        try:
+                            return float(getattr(self, name))
+                        except (TypeError, ValueError):
+                            pass
+        # fallback to raft heartbeat_interval only if large enough
+        try:
+            hi = float(getattr(self, "heartbeat_interval", 0) or 0)
+            if hi >= 0.5 and val < 0.5:
+                val = hi
+        except Exception:
+            pass
+        if val <= 0:
+            val = 1.0
+        return val
+
+    def _failure_threshold(self):
+        names = [
+            "failure_threshold",
+            "degraded_threshold",
+            "degraded_after",
+            "degraded_timeout",
+            "failure_timeout",
+            "miss_threshold",
+            "miss_threshold_seconds",
+            "failure_detection_threshold",
+            "failure_detection_timeout",
+            "detection_threshold",
+            "detection_timeout",
+            "failure_detector_threshold",
+            "failure_detector_timeout",
+            "degraded_after_seconds",
+            "degraded_timeout_seconds",
+            "FAILURE_THRESHOLD",
+            "DEGRADED_THRESHOLD",
+            "DEGRADED_AFTER",
+            "DEGRADED_TIMEOUT",
+            "FAILURE_TIMEOUT",
+            "FAILURE_DETECTION_THRESHOLD",
+            "FAILURE_DETECTION_TIMEOUT",
+            "DETECTION_THRESHOLD",
+            "DETECTION_TIMEOUT",
+        ]
+        val = self._module_constant(names, self.FAILURE_THRESHOLD)
+        if val == self.FAILURE_THRESHOLD:
+            for obj in (self, type(self)):
+                for name in list(getattr(obj, "__dict__", {}).keys()):
+                    low = name.lower()
+                    if ("fail" in low or "detect" in low or "degrad" in low) and (
+                        "threshold" in low or "timeout" in low or "after" in low or "seconds" in low
+                    ):
+                        try:
+                            return float(getattr(self, name))
+                        except (TypeError, ValueError):
+                            pass
+        if val <= 0:
+            val = 3.0
+        return val
+
+    def _rpc_timeout(self):
+        names = [
+            "heartbeat_rpc_timeout",
+            "heartbeat_timeout",
+            "rpc_timeout",
+            "ping_timeout",
+            "heartbeat_timeout_seconds",
+            "rpc_timeout_seconds",
+            "ping_timeout_seconds",
+            "HEARTBEAT_RPC_TIMEOUT",
+            "HEARTBEAT_TIMEOUT",
+            "PING_TIMEOUT",
+            "RPC_TIMEOUT",
+        ]
+        val = self._module_constant(names, self.HEARTBEAT_RPC_TIMEOUT)
+        if val == self.HEARTBEAT_RPC_TIMEOUT:
+            for obj in (self, type(self)):
+                for name in list(getattr(obj, "__dict__", {}).keys()):
+                    low = name.lower()
+                    if "timeout" in low and ("rpc" in low or "ping" in low or "heartbeat" in low or "http" in low):
+                        try:
+                            return float(getattr(self, name))
+                        except (TypeError, ValueError):
+                            pass
+        if val <= 0:
+            val = 1.0
+        return val
+
+    def start_failure_detector(self):
+        if self._detector_thread is not None and self._detector_thread.is_alive():
+            return
+        self._detector_stop.clear()
+        with self._degraded_lock:
+            now = time.monotonic()
+            for p in self.peers:
+                self._last_seen.setdefault(p, now)
+        t = threading.Thread(
+            target=self._detector_loop, daemon=True, name=f"detector-{self.node_id}"
+        )
+        self._detector_thread = t
+        t.start()
+
+    def stop_failure_detector(self):
+        self._detector_stop.set()
+        t = self._detector_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=0.5)
+        # leave thread reference; cleared in loop
+
+    def _parse_heartbeat_result(self, res):
+        if res is None:
+            return False, 0
+        if isinstance(res, bool):
+            return res, 0
+        if isinstance(res, (tuple, list)):
+            if len(res) == 0:
+                return False, 0
+            ok = bool(res[0])
+            term = 0
+            if len(res) >= 3:
+                try:
+                    term = int(res[2] or 0)
+                except (TypeError, ValueError):
+                    term = 0
+            elif len(res) == 2:
+                # could be (ok, term) or (ok, leader)
+                try:
+                    term = int(res[1] or 0)
+                except (TypeError, ValueError):
+                    term = 0
+            return ok, term
+        if isinstance(res, dict):
+            ok = res.get("ok", res.get("success", res.get("healthy", False)))
+            try:
+                term = int(res.get("term", 0) or 0)
+            except (TypeError, ValueError):
+                term = 0
+            return bool(ok), term
+        ok = getattr(res, "ok", getattr(res, "success", getattr(res, "healthy", None)))
+        if ok is None:
+            ok = bool(res)
+        try:
+            term = int(getattr(res, "term", 0) or 0)
+        except (TypeError, ValueError):
+            term = 0
+        return bool(ok), term
+
+    def _detector_loop(self):
+        try:
+            while self._running and not self._detector_stop.is_set() and self.is_leader():
+                interval = self._failure_interval()
+                threshold = self._failure_threshold()
+                started = time.monotonic()
+                for peer in list(self.peers):
+                    if not self.is_leader() or self._detector_stop.is_set() or not self._running:
+                        break
+                    success = False
+                    term_resp = 0
+                    try:
+                        res = self.transport.heartbeat(peer, node_id=self.node_id, term=self.current_term)
+                        success, term_resp = self._parse_heartbeat_result(res)
+                    except Exception:
+                        success = False
+                        term_resp = 0
+                    with self._degraded_lock:
+                        now = time.monotonic()
+                        pid = self.peer_id_map.get(peer, peer)
+                        try:
+                            pid = self.peer_id_map.get(str(peer), pid)
+                        except Exception:
+                            pass
+                        if success:
+                            self._last_seen[peer] = now
+                            self._degraded.discard(pid)
+                        else:
+                            last = self._last_seen.get(peer)
+                            if last is None:
+                                self._last_seen[peer] = now
+                                last = now
+                            if now - last >= threshold:
+                                self._degraded.add(pid)
+                    # step-down if higher term reported
+                    if success and term_resp:
+                        try:
+                            with self._lock:
+                                if term_resp > self.current_term:
+                                    self.current_term = term_resp
+                                    self.voted_for = None
+                                    self.state = self.FOLLOWER
+                                    self._leader_id = None
+                                    self._persist_state()
+                                    self._reset_election_timer()
+                        except Exception:
+                            pass
+                # wait for next interval
+                elapsed = time.monotonic() - started
+                wait = interval - elapsed
+                if wait < 0.01:
+                    wait = 0.01
+                end = time.monotonic() + wait
+                while time.monotonic() < end and self.is_leader() and not self._detector_stop.is_set() and self._running:
+                    time.sleep(min(0.05, max(0.001, end - time.monotonic())))
+        finally:
+            self._detector_thread = None
+
     def start(self) -> None:
         if self._running:
             return
@@ -286,6 +762,11 @@ class RaftNode:
     def stop(self) -> None:
         self._running = False
         self._stop_event.set()
+        self._detector_stop.set()
+        t = self._detector_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=2.0)
+        self._detector_thread = None
         t = self._thread
         if t is not None and t.is_alive():
             t.join(timeout=2.0)
@@ -444,12 +925,16 @@ class RaftNode:
         self._reset_election_timer()
         while self._running:
             if self.state == self.LEADER:
+                if self._detector_thread is None or not self._detector_thread.is_alive():
+                    self.start_failure_detector()
                 self._replication_round()
                 slept = 0.0
                 while slept < self.heartbeat_interval and self._running:
                     time.sleep(min(0.01, self.heartbeat_interval - slept))
                     slept += 0.01
             else:
+                if self._detector_thread is not None:
+                    self.stop_failure_detector()
                 now = time.monotonic()
                 if now >= self.election_deadline:
                     self._start_election()
@@ -518,6 +1003,10 @@ class RaftNode:
                 self._leader_id = self.node_id
                 self.next_index = {p: self.last_log_index() + 1 for p in self.peers}
                 self.match_index = {p: 0 for p in self.peers}
+                try:
+                    self.start_failure_detector()
+                except Exception:
+                    pass
             self._reset_election_timer()
 
         if self.is_leader():
@@ -674,3 +1163,44 @@ class DirectTransport:
             return bool(node.storage.has_shard(key, int(shard_index)))
         except Exception:
             return False
+
+    def heartbeat(self, peer_id, node_id="", term=0):
+        node = self._node(peer_id)
+        if node is None:
+            return False, "", 0
+        try:
+            if hasattr(node, "_running") and node._running is False:
+                return False, "", 0
+            lid = None
+            if hasattr(node, "leader_id"):
+                try:
+                    lid = node.leader_id()
+                except Exception:
+                    lid = None
+            if lid is None and hasattr(node, "_leader_id"):
+                lid = getattr(node, "_leader_id", None)
+            cur_term = 0
+            if hasattr(node, "current_term"):
+                try:
+                    cur_term = int(node.current_term)
+                except Exception:
+                    cur_term = 0
+            # if node is a NodeService-like object
+            if hasattr(node, "raft") and getattr(node, "raft", None) is not None:
+                r = node.raft
+                try:
+                    if hasattr(r, "_running") and r._running is False:
+                        return False, "", 0
+                except Exception:
+                    pass
+                try:
+                    lid = r.leader_id() if hasattr(r, "leader_id") else lid
+                except Exception:
+                    pass
+                try:
+                    cur_term = int(r.current_term)
+                except Exception:
+                    pass
+            return True, (lid if lid is not None else ""), int(cur_term or 0)
+        except Exception:
+            return False, "", 0

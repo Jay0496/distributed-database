@@ -46,8 +46,9 @@ def main() -> None:
     storage = Storage(storage_path)
 
     peers = parse_peers(args.peers)
+    peer_ids = [p.split(":")[0] if ":" in p else p for p in peers]
     transport = GrpcTransport(peers)
-    raft = RaftNode(args.id, peers, storage=storage, transport=transport)
+    raft = RaftNode(args.id, peers, storage=storage, transport=transport, peer_ids=peer_ids)
     raft.start()
 
     print(f"starting {args.id} on {args.port}", flush=True)

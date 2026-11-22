@@ -54,7 +54,13 @@ class NodeService(kv_pb2_grpc.KVServicer):
         )
 
     def Heartbeat(self, request, context):
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, "not implemented")
+        return kv_pb2.HeartbeatResponse(
+            ok=True,
+            leader=self.raft.leader_id() or "",
+            degraded=[],
+            mode=self.storage.get_raft_state("default_mode") or "rs32",
+            term=int(self.raft.current_term),
+        )
 
     def AppendEntries(self, request, context):
         context.abort(grpc.StatusCode.UNIMPLEMENTED, "not implemented")

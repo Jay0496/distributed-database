@@ -364,6 +364,29 @@ class NodeService(kv_pb2_grpc.KVServicer):
             if hashlib.sha256(decoded).hexdigest() != str(checksum):
                 return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
 
+        # Read repair: rebuild missing/corrupt shards in the background.
+        try:
+            try:
+                from node.encode import RS32Engine, ReplicationEngine
+            except Exception:
+                import os as _os, sys as _sys
+                _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+                from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+            try:
+                from node.repair import read_repair
+            except Exception:
+                import os as _os, sys as _sys
+                _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+                from node.repair import read_repair  # type: ignore
+            canonical_shards = engine.encode(decoded)
+            # pad owners to nslots
+            _owners = list(owners) if owners is not None else []
+            while len(_owners) < nslots:
+                _owners.append(None)
+            read_repair(engine, shards, canonical_shards, _owners, transport, key, version)
+        except Exception:
+            pass
+
         return kv_pb2.GetResponse(value=bytes(decoded), found=True, version=version)
 
     def SetMode(self, request, context):

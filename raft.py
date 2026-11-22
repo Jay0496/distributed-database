@@ -3,6 +3,7 @@
 from node.raft import (  # noqa: F401
     RaftNode,
     DirectTransport,
+    RaftLogEntry,
 )
 
-__all__ = ["RaftNode", "DirectTransport"]
+__all__ = ["RaftNode", "DirectTransport", "RaftLogEntry"]

@@ -100,7 +100,7 @@ secrets. Sensitive fields are redacted to `[REDACTED]`.
 ## Economy proof
 
 ```sh
-du -sh .
+for v in node{1..5}_data; do echo -n "$v: "; docker volume inspect $v -f '{{.Mountpoint}}' | xargs du -sh; done
 ```
 
 The repository stays small: source + tests + proto only, no large binaries.

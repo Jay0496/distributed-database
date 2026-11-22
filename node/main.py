@@ -21,12 +21,12 @@ if _REPO_ROOT not in sys.path:
 try:
     from node.storage import Storage
     from node.raft import RaftNode
-    from node.server import NodeService, GrpcTransport
+    from node.server import NodeService, GrpcTransport, AuthInterceptor
 except Exception:  # pragma: no cover - running from node/ directly
     sys.path.insert(0, os.path.dirname(__file__))
     from storage import Storage  # type: ignore
     from raft import RaftNode  # type: ignore
-    from server import NodeService, GrpcTransport  # type: ignore
+    from server import NodeService, GrpcTransport, AuthInterceptor  # type: ignore
 
 try:
     from node.logging import get_logger, log_event
@@ -75,7 +75,10 @@ def main() -> None:
 
     import gen.kv_pb2_grpc as kv_pb2_grpc
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=16),
+        interceptors=(AuthInterceptor(),),
+    )
     kv_pb2_grpc.add_KVServicer_to_server(NodeService(args.id, storage, raft), server)
 
     server.add_insecure_port(f"0.0.0.0:{args.port}")

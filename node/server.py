@@ -2,6 +2,11 @@
 
 import os
 import sys
+import hmac
+try:
+    from concurrent import futures
+except Exception:  # pragma: no cover
+    import concurrent.futures as futures
 
 try:
     import grpc
@@ -10,6 +15,19 @@ except Exception:  # pragma: no cover
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     import grpc
     from gen import kv_pb2, kv_pb2_grpc
+
+# Shared secret for gRPC auth. Empty disables auth (backward compatible).
+TOKEN = os.environ.get("TOKEN", "")
+
+
+def _get_token():
+    """Resolve the current token, honoring env changes and test overrides."""
+    env_val = os.environ.get("TOKEN", None)
+    if env_val is not None:
+        if env_val == "":
+            return ""
+        return env_val
+    return globals().get("TOKEN", "") or ""
 
 
 # Failure detection constants (patchable by tests)
@@ -483,6 +501,55 @@ class NodeService(kv_pb2_grpc.KVServicer):
         )
         return kv_pb2.RequestVoteResponse(term=int(term), vote_granted=bool(granted))
 
+class AuthInterceptor(grpc.ServerInterceptor):
+    """Unary server interceptor enforcing a shared bearer token.
+
+    Auth is disabled when TOKEN is empty.
+    """
+
+    def intercept_service(self, continuation, handler_call_details):
+        token = _get_token()
+        if not token:
+            return continuation(handler_call_details)
+
+        provided = None
+        metadata = getattr(handler_call_details, "invocation_metadata", None) or ()
+        for key, value in metadata:
+            if str(key).lower() == "authorization":
+                provided = value
+                break
+
+        ok = False
+        if isinstance(provided, str) and provided.startswith("Bearer "):
+            candidate = provided[len("Bearer "):]
+            try:
+                ok = hmac.compare_digest(token, candidate)
+            except Exception:
+                ok = False
+        elif isinstance(provided, (bytes, bytearray)):
+            try:
+                text = provided.decode("utf-8", "replace")
+            except Exception:
+                text = ""
+            if text.startswith("Bearer "):
+                candidate = text[len("Bearer "):]
+                try:
+                    ok = hmac.compare_digest(token, candidate)
+                except Exception:
+                    ok = False
+
+        if not ok:
+            def _abort(request, context):
+                try:
+                    context.abort(grpc.StatusCode.UNAUTHENTICATED, "unauthenticated")
+                except Exception:
+                    pass
+
+            return grpc.unary_unary_rpc_method_handler(_abort)
+
+        return continuation(handler_call_details)
+
+
 class GrpcTransport:
     """gRPC-based transport to peer nodes. Tolerates peer failures."""
 
@@ -500,6 +567,18 @@ class GrpcTransport:
             except Exception:
                 self._channels[addr] = None
                 self._stubs[addr] = None
+
+    def _token(self):
+        t = getattr(self, "token", None)
+        if t is None:
+            t = os.environ.get("TOKEN", "")
+        return t or ""
+
+    def _auth_metadata(self):
+        token = self._token()
+        if not token:
+            return None
+        return [("authorization", "Bearer %s" % token)]
 
     def _stub(self, peer_id):
         if peer_id in self._stubs:
@@ -526,6 +605,10 @@ class GrpcTransport:
 
     def request_vote(self, peer_id, req_dict):
         def _do(stub):
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.RequestVote(
                 kv_pb2.RequestVoteRequest(
                     term=int(req_dict.get("term", 0)),
@@ -533,7 +616,7 @@ class GrpcTransport:
                     last_log_index=int(req_dict.get("last_log_index", 0)),
                     last_log_term=int(req_dict.get("last_log_term", 0)),
                 ),
-                timeout=2.0,
+                **kwargs,
             )
             return int(resp.term), bool(resp.vote_granted)
 
@@ -567,6 +650,10 @@ class GrpcTransport:
                         payload=bytes(cmd) if cmd is not None else b"",
                     )
                 )
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.AppendEntries(
                 kv_pb2.AppendEntriesRequest(
                     term=int(req_dict.get("term", 0)),
@@ -576,7 +663,7 @@ class GrpcTransport:
                     entries=entries,
                     leader_commit=int(req_dict.get("leader_commit", 0)),
                 ),
-                timeout=2.0,
+                **kwargs,
             )
             return int(resp.term), bool(resp.success)
 
@@ -587,9 +674,13 @@ class GrpcTransport:
 
     def heartbeat(self, peer_id, node_id="", term=0):
         def _do(stub):
+            md = self._auth_metadata()
+            kwargs = {"timeout": 1.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.Heartbeat(
                 kv_pb2.HeartbeatRequest(node_id=node_id, term=int(term)),
-                timeout=1.0,
+                **kwargs,
             )
             return bool(resp.ok), resp.leader, int(resp.term)
 
@@ -600,6 +691,10 @@ class GrpcTransport:
 
     def store_shard(self, peer_id, key, shard_index, version, data):
         def _do(stub):
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.StoreShard(
                 kv_pb2.StoreShardRequest(
                     key=key,
@@ -607,7 +702,7 @@ class GrpcTransport:
                     data=bytes(data),
                     version=int(version),
                 ),
-                timeout=2.0,
+                **kwargs,
             )
             return bool(resp.ok)
 
@@ -616,9 +711,13 @@ class GrpcTransport:
 
     def fetch_shard(self, peer_id, key, shard_index):
         def _do(stub):
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.FetchShard(
                 kv_pb2.FetchShardRequest(key=key, shard_index=int(shard_index)),
-                timeout=2.0,
+                **kwargs,
             )
             if not resp.present:
                 return None
@@ -628,9 +727,13 @@ class GrpcTransport:
 
     def has_shard(self, peer_id, key, shard_index):
         def _do(stub):
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
             resp = stub.HasShard(
                 kv_pb2.HasShardRequest(key=key, shard_index=int(shard_index)),
-                timeout=2.0,
+                **kwargs,
             )
             return bool(resp.present)
 
@@ -639,14 +742,22 @@ class GrpcTransport:
 
     def get_leader(self, peer_id):
         def _do(stub):
-            resp = stub.GetLeader(kv_pb2.GetLeaderRequest(), timeout=2.0)
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            resp = stub.GetLeader(kv_pb2.GetLeaderRequest(), **kwargs)
             return resp.leader, list(resp.degraded), resp.mode, int(resp.term), int(resp.key_count)
 
         return self._call(peer_id, _do)
 
     def list_keys(self, peer_id):
         def _do(stub):
-            resp = stub.ListKeys(kv_pb2.ListKeysRequest(), timeout=2.0)
+            md = self._auth_metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            resp = stub.ListKeys(kv_pb2.ListKeysRequest(), **kwargs)
             return list(resp.keys)
 
         res = self._call(peer_id, _do)
@@ -663,7 +774,10 @@ class GrpcTransport:
 
 def serve(node_id, storage, raft, port, max_workers=16):
     """Helper to build a grpc server (used by main.py and tests)."""
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        interceptors=(AuthInterceptor(),),
+    )
     kv_pb2_grpc.add_KVServicer_to_server(NodeService(node_id, storage, raft), server)
     bound = server.add_insecure_port(f"0.0.0.0:{port}")
     return server, bound

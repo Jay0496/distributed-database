@@ -1,12 +1,8 @@
-import os
-import sys
 import threading
 
-try:
-    from node.storage import Storage
-except Exception:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from storage import Storage
+import pytest
+
+from node.storage import Storage
 
 
 def test_schema_idempotent(tmp_path):
@@ -120,3 +116,20 @@ def test_concurrent_writes(tmp_path):
     s2 = Storage(p)
     assert len(s2.get_log_from(1)) == 100
     s2.close()
+
+
+def test_crud_shard_delete(tmp_path):
+    s = Storage(str(tmp_path / "crud.db"))
+    assert not s.has_shard("k", 0)
+    s.store_shard("k", 0, 1, b"x")
+    assert s.has_shard("k", 0)
+    s.delete_shard("k", 0)
+    assert not s.has_shard("k", 0)
+    assert s.fetch_shard("k", 0) is None
+    s.close()
+
+
+def test_list_for_node_empty(tmp_path):
+    s = Storage(str(tmp_path / "empty.db"))
+    assert s.list_for_node(0) == []
+    s.close()

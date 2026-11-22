@@ -100,6 +100,11 @@ services:
       - node4
       - node5
 
+  node:
+    profiles: ["test"]
+    build: .
+    command: ["pytest", "-q"]
+
 volumes:
   node1_data:
   node2_data:

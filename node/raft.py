@@ -109,6 +109,28 @@ class RaftNode:
         except Exception:
             pass
 
+    def _persist_append(self, entry) -> int:
+        if self.storage is None:
+            if getattr(entry, "index", 0) <= 0:
+                entry.index = self.last_log_index() + 1
+            return entry.index
+        try:
+            idx = self.storage.append_log(entry.term, bytes(entry.command) if entry.command is not None else b"")
+            entry.index = idx
+            return idx
+        except Exception:
+            if getattr(entry, "index", 0) <= 0:
+                entry.index = self.last_log_index() + 1
+            return entry.index
+
+    def _persist_truncate(self, idx: int) -> None:
+        if self.storage is None:
+            return
+        try:
+            self.storage.truncate_log(idx)
+        except Exception:
+            pass
+
     def last_log_index(self) -> int:
         if not self.log:
             return 0
@@ -259,6 +281,7 @@ class RaftNode:
             # truncate conflicting suffix
             if prev_log_index + 1 < len(self.log):
                 del self.log[prev_log_index + 1 :]
+                self._persist_truncate(prev_log_index + 1)
 
             # append entries not already present
             for raw in (entries or []):
@@ -268,8 +291,11 @@ class RaftNode:
                 if e.index <= self.last_log_index():
                     if self._term_at(e.index) != e.term:
                         del self.log[e.index :]
+                        self._persist_truncate(e.index)
+                        self._persist_append(e)
                         self.log.append(e)
                 else:
+                    self._persist_append(e)
                     self.log.append(e)
 
             # advance commit index
@@ -492,11 +518,11 @@ class RaftNode:
         with self._lock:
             if self.state != self.LEADER:
                 return None
-            index = self.last_log_index() + 1
-            entry = RaftLogEntry(term=self.current_term, index=index, command=bytes(command))
+            entry = RaftLogEntry(term=self.current_term, index=0, command=bytes(command))
+            idx = self._persist_append(entry)
             self.log.append(entry)
         threading.Thread(target=self._replication_round, daemon=True).start()
-        return index
+        return idx
 
 
 class DirectTransport:

@@ -28,6 +28,23 @@ except Exception:  # pragma: no cover - running from node/ directly
     from raft import RaftNode  # type: ignore
     from server import NodeService, GrpcTransport  # type: ignore
 
+try:
+    from node.logging import get_logger, log_event
+except Exception:  # pragma: no cover - alternate import path
+    try:
+        sys.path.insert(0, os.path.dirname(__file__))
+        from logging import get_logger, log_event  # type: ignore
+    except Exception:
+        def get_logger(name):  # type: ignore
+            import logging
+            return logging.getLogger(name)
+
+        def log_event(logger, msg, **fields):  # type: ignore
+            try:
+                logger.info(msg)
+            except Exception:
+                pass
+
 
 def parse_peers(raw):
     return [p.strip() for p in (raw or "").split(",") if p.strip()]
@@ -45,13 +62,16 @@ def main() -> None:
     storage_path = os.path.join(data_dir, f"{args.id}.db")
     storage = Storage(storage_path)
 
+    os.environ.setdefault("NODE_ID", args.id)
+    logger = get_logger(f"node.{args.id}")
+
     peers = parse_peers(args.peers)
     peer_ids = [p.split(":")[0] if ":" in p else p for p in peers]
     transport = GrpcTransport(peers)
     raft = RaftNode(args.id, peers, storage=storage, transport=transport, peer_ids=peer_ids)
     raft.start()
 
-    print(f"starting {args.id} on {args.port}", flush=True)
+    log_event(logger, "starting node", node_id=args.id, port=args.port)
 
     import gen.kv_pb2_grpc as kv_pb2_grpc
 
@@ -60,7 +80,7 @@ def main() -> None:
 
     server.add_insecure_port(f"0.0.0.0:{args.port}")
     server.start()
-    print("listening", flush=True)
+    log_event(logger, "listening", port=args.port)
 
     # Startup sync: pull shards this node should own after Raft recovery.
     try:
@@ -77,7 +97,7 @@ def main() -> None:
 
         def _sync():
             try:
-                sync_on_start(args.id, _node_index, storage, transport, log=print)
+                sync_on_start(args.id, _node_index, storage, transport, log=logger.info)
             except Exception:
                 pass
 

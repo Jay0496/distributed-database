@@ -15,7 +15,7 @@ services:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',50051)); s.close()\""]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
       start_period: 5s
 
   node2:
@@ -34,7 +34,7 @@ services:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',50052)); s.close()\""]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
       start_period: 5s
 
   node3:
@@ -53,7 +53,7 @@ services:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',50053)); s.close()\""]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
       start_period: 5s
 
   node4:
@@ -72,7 +72,7 @@ services:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',50054)); s.close()\""]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
       start_period: 5s
 
   node5:
@@ -91,7 +91,7 @@ services:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',50055)); s.close()\""]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
       start_period: 5s
 
   gateway:

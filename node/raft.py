@@ -105,6 +105,25 @@ class RaftNode:
             self.last_applied = 0
             if self.apply_fn is None and self.storage is not None:
                 self.apply_fn = self._apply_entry
+            self._replay_committed_locked()
+
+    def _replay_committed_locked(self) -> None:
+        target = self.commit_index
+        if target > self.last_log_index():
+            target = self.last_log_index()
+        while self.last_applied < target:
+            self.last_applied += 1
+            if self.last_applied < len(self.log):
+                entry = self.log[self.last_applied]
+                if self.apply_fn is not None:
+                    try:
+                        self.apply_fn(entry)
+                    except Exception:
+                        pass
+        if self.commit_index <= self.last_log_index():
+            self.last_applied = self.commit_index
+        else:
+            self.last_applied = self.last_log_index()
 
     def _default_apply(self, entry) -> None:
         if self.storage is None:

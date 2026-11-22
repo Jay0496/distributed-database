@@ -192,17 +192,19 @@ class GatewayClient:
             return False
 
 
-    def put(self, key, value, mode=None) -> bool:
+    def put(self, key, value, mode=None):
         if isinstance(value, str):
             value = value.encode("utf-8")
         value = bytes(value) if value is not None else b""
 
         def _do(stub):
             resp = stub.Put(kv_pb2.PutRequest(key=key, value=value, mode=mode or ""), timeout=2.0)
-            return bool(getattr(resp, "ok", False))
+            if not getattr(resp, "ok", False):
+                raise RuntimeError(getattr(resp, "error", "put failed") or "put failed")
+            return int(getattr(resp, "version", 0) or 0)
 
         try:
-            return bool(self.call_with_retry(_do))
+            return self.call_with_retry(_do)
         except Exception:
             return False
 

@@ -5,6 +5,14 @@ import sys
 import time
 
 try:
+    from .ring import ConsistentHashRing
+except Exception:
+    try:
+        from ring import ConsistentHashRing
+    except Exception:
+        ConsistentHashRing = None
+
+try:
     import grpc
     from gen import kv_pb2, kv_pb2_grpc
 except Exception:  # pragma: no cover
@@ -26,6 +34,14 @@ class GatewayClient:
             self._ensure_channel(addr)
         self._leader = None
         self._last_resp = None
+        self.ring = None
+        if ConsistentHashRing is not None:
+            try:
+                self.ring = ConsistentHashRing()
+                for addr in self.peers:
+                    self.ring.add_node(addr)
+            except Exception:
+                self.ring = None
 
     # -- channel/stub helpers -------------------------------------------------
     @property

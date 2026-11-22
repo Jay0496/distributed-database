@@ -159,6 +159,10 @@ class RepairSweeper:
                         self.transport.store_shard(owner, key, i, version, canonical[i])
                     except Exception:
                         pass
+                    try:
+                        self.log("sweep: refilled shard %d on %s" % (i, owner))
+                    except Exception:
+                        pass
 
     def stop(self):
         try:

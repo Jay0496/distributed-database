@@ -191,9 +191,24 @@ class GatewayClient:
             self._leader = self._leader_addr
         mode = getattr(resp, "mode", None)
         self._mode = mode
+
+        def _norm(p):
+            try:
+                s = str(p)
+            except Exception:
+                return p
+            if ":" in s:
+                s = s.split(":", 1)[0]
+            return s
+
+        degraded = []
+        try:
+            degraded = sorted({ _norm(p) for p in (getattr(resp, "degraded", []) or []) })
+        except Exception:
+            degraded = [ _norm(p) for p in (getattr(resp, "degraded", []) or []) ]
         return {
             "leader": self._leader_id if self._leader_id is not None else getattr(resp, "leader", None),
-            "degraded": list(getattr(resp, "degraded", []) or []),
+            "degraded": degraded,
             "mode": mode,
             "key_count": int(getattr(resp, "key_count", 0) or 0),
         }

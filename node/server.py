@@ -386,6 +386,15 @@ class NodeService(kv_pb2_grpc.KVServicer):
             pass
         return kv_pb2.SetModeResponse(ok=True, mode=mode)
 
+    def _normalize_degraded_id(self, peer):
+        try:
+            p = str(peer)
+        except Exception:
+            return peer
+        if ":" in p:
+            p = p.split(":", 1)[0]
+        return p
+
     def GetLeader(self, request, context):
         leader = self.raft.leader_id() if self.raft is not None else ""
         mode = self.storage.get_raft_state("default_mode") or "rs32"
@@ -393,9 +402,9 @@ class NodeService(kv_pb2_grpc.KVServicer):
         key_count = len(self.storage.list_meta_keys())
         degraded = []
         try:
-            degraded = sorted(self.degraded)
+            degraded = sorted({self._normalize_degraded_id(p) for p in (self.degraded or [])})
         except Exception:
-            degraded = list(self.degraded or [])
+            degraded = [self._normalize_degraded_id(p) for p in (self.degraded or [])]
         return kv_pb2.GetLeaderResponse(
             leader=leader if leader is not None else "",
             degraded=degraded,
@@ -410,9 +419,9 @@ class NodeService(kv_pb2_grpc.KVServicer):
         mode = self.storage.get_raft_state("default_mode") or "rs32"
         degraded = []
         try:
-            degraded = sorted(self.degraded)
+            degraded = sorted({self._normalize_degraded_id(p) for p in (self.degraded or [])})
         except Exception:
-            degraded = list(self.degraded or [])
+            degraded = [self._normalize_degraded_id(p) for p in (self.degraded or [])]
         # If request term higher, could step down (handled by raft elsewhere).
         return kv_pb2.HeartbeatResponse(
             ok=True,

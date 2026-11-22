@@ -107,7 +107,58 @@ class RepairSweeper:
                 pass
 
     def sweep_once(self):
-        pass
+        try:
+            keys = list(self.storage.list_meta_keys())
+        except Exception:
+            keys = []
+        for key in keys:
+            try:
+                meta = self.storage.get_meta(key)
+            except Exception:
+                meta = None
+            if not meta:
+                continue
+            if isinstance(meta, dict):
+                mode = meta.get("mode")
+                version = meta.get("version")
+                owners = list(meta.get("owners") or [])
+            else:
+                mode = meta["mode"]
+                version = meta["version"]
+                owners = list(meta["owners"] or [])
+            if not owners:
+                continue
+            try:
+                shards = [
+                    self.transport.fetch_shard(owner, key, idx)
+                    for idx, owner in enumerate(owners)
+                ]
+            except Exception:
+                continue
+            if not shards:
+                continue
+            if all(s is not None for s in shards):
+                continue
+            engine_cls = RS32Engine if mode == "rs32" else ReplicationEngine
+            if engine_cls is None:
+                continue
+            engine = engine_cls()
+            try:
+                decoded = engine.decode(shards)
+            except Exception:
+                continue
+            try:
+                canonical = engine.encode(decoded)
+            except Exception:
+                continue
+            for i, owner in enumerate(owners):
+                if i >= len(canonical):
+                    continue
+                if shards[i] is None or shards[i] != canonical[i]:
+                    try:
+                        self.transport.store_shard(owner, key, i, version, canonical[i])
+                    except Exception:
+                        pass
 
     def stop(self):
         try:

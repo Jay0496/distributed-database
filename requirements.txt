@@ -3,3 +3,4 @@ grpcio-tools==1.85.3
 protobuf==7.36.2
 reedsolo==1.7.0
 pytest==7.4.0
+pytest-cov==7.1.0

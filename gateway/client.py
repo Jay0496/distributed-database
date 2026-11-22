@@ -92,6 +92,16 @@ class GatewayClient:
             return None
         if leader in self.peers:
             return leader
+        # leader is usually a node id like "node2"; map to the peer address
+        # by its trailing index before falling back to fuzzy host matching.
+        import re as _re
+        m = _re.search(r"(\d+)\s*$", str(leader))
+        if m:
+            idx = int(m.group(1))
+            if 1 <= idx <= len(self.peers):
+                return self.peers[idx - 1]
+            if 0 <= idx < len(self.peers):
+                return self.peers[idx]
         for p in self.peers:
             host = p.split(":")[0]
             if host == leader or p == leader:

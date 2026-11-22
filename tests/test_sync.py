@@ -95,3 +95,28 @@ def test_sync_on_start_no_corrupt_after_sync(tmp_path):
     assert storage.fetch_shard(key, 0) != b"\xff" * len(canonical[0])
 
     storage.close()
+
+
+def test_sync_on_start_reconstructs_missing_shard(tmp_path):
+    owners = [f"node{i}" for i in range(5)]
+    key = "k"
+    version = 3
+    value = b"secret payload"
+    canonical = RS32Engine().encode(value)
+
+    storage = Storage(str(tmp_path / "s4.db"))
+    storage.upsert_meta(key, "rs32", version, len(value), "checksum", owners)
+
+    # node0 missing its shard; peers do not hold it either.
+    peers = [f"node{i}" for i in range(1, 5)]
+    shards = {}
+    for i in range(1, 5):
+        shards[(key, i)] = canonical[i]
+    transport = FakeTransport(peers, [key], shards)
+
+    pulled = sync_on_start("node0", 0, storage, transport)
+
+    assert pulled == 1
+    assert storage.fetch_shard(key, 0) == canonical[0]
+
+    storage.close()

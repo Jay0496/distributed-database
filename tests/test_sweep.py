@@ -79,3 +79,22 @@ def test_sweep_run_stops_on_flag():
     stop.set()
     t.join(timeout=1.0)
     assert not t.is_alive()
+
+
+def test_sweeper_run_interval_zero_and_stop(tmp_path):
+    import threading
+    storage = Storage(str(tmp_path / "s3.db"))
+    owners = [f"node{i}" for i in range(5)]
+    storage.upsert_meta("k", "rs32", 1, 5, "checksum", owners)
+    transport = FakeTransport({})
+    stop_event = threading.Event()
+    sweeper = RepairSweeper("node0", storage, transport, interval=0, stop_event=stop_event, log=lambda *a, **k: None)
+
+    t = threading.Thread(target=sweeper.run, daemon=True)
+    t.start()
+    time.sleep(0.05)
+    sweeper.stop()
+    t.join(timeout=1.0)
+    assert stop_event.is_set()
+
+    storage.close()

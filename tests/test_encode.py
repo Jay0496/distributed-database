@@ -5,9 +5,9 @@ import random
 import pytest
 
 from node.encode import (
-    RS32Engine,
-    ReplicationEngine,
     RedundancyEngine,
+    ReplicationEngine,
+    RS32Engine,
     checksum,
 )
 

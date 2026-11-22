@@ -4,9 +4,9 @@ import json
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
-
+from typing import Any
 
 # Failure detection constants (patchable by tests)
 HEARTBEAT_INTERVAL = 1.0
@@ -46,7 +46,7 @@ class RaftLogEntry:
     command: bytes = b""
 
 
-_NODE_REGISTRY: Dict[str, "RaftNode"] = {}
+_NODE_REGISTRY: dict[str, "RaftNode"] = {}
 
 
 class RaftNode:
@@ -76,14 +76,14 @@ class RaftNode:
     def __init__(
         self,
         node_id: str,
-        peers: List[str],
+        peers: list[str],
         storage: Any = None,
         transport: Any = None,
         election_timeout_range: tuple = (0.15, 0.30),
         heartbeat_interval: float = 0.05,
-        peer_ids: List[str] = None,
+        peer_ids: list[str] = None,
         peer_id_map: Any = None,
-        peers_ids: List[str] = None,
+        peers_ids: list[str] = None,
         failure_heartbeat_interval: float = 1.0,
         failure_threshold: float = 3.0,
         degraded_threshold: float = None,
@@ -161,30 +161,30 @@ class RaftNode:
             self.transport = transport
 
         self.current_term = 0
-        self.voted_for: Optional[str] = None
+        self.voted_for: str | None = None
         self.commit_index = 0
         self.last_applied = 0
         self.state = self.FOLLOWER
-        self._leader_id: Optional[str] = None
+        self._leader_id: str | None = None
 
-        self.log: List[RaftLogEntry] = [RaftLogEntry(term=0, index=0, command=b"")]
-        self.apply_fn: Optional[Callable[[RaftLogEntry], None]] = None
-        self._user_apply_fn: Optional[Callable[[RaftLogEntry], None]] = None
-        self.next_index: Dict[str, int] = {}
-        self.match_index: Dict[str, int] = {}
+        self.log: list[RaftLogEntry] = [RaftLogEntry(term=0, index=0, command=b"")]
+        self.apply_fn: Callable[[RaftLogEntry], None] | None = None
+        self._user_apply_fn: Callable[[RaftLogEntry], None] | None = None
+        self.next_index: dict[str, int] = {}
+        self.match_index: dict[str, int] = {}
 
         self._lock = threading.RLock()
         self._running = False
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self.election_deadline = 0.0
 
         self._degraded_lock = threading.RLock()
         self._degraded = DegradedSet()
-        self._last_seen: Dict[str, float] = {}
+        self._last_seen: dict[str, float] = {}
         self._detector_stop = threading.Event()
-        self._detector_thread: Optional[threading.Thread] = None
-        self._supervisor_thread: Optional[threading.Thread] = None
+        self._detector_thread: threading.Thread | None = None
+        self._supervisor_thread: threading.Thread | None = None
 
         self.load_from_storage()
 
@@ -780,7 +780,7 @@ class RaftNode:
         with self._lock:
             return self.state == self.LEADER
 
-    def leader_id(self) -> Optional[str]:
+    def leader_id(self) -> str | None:
         with self._lock:
             if self.state == self.LEADER:
                 return self.node_id
@@ -1082,7 +1082,7 @@ class RaftNode:
     def _send_heartbeats(self) -> None:
         self._replication_round()
 
-    def append_command(self, command) -> Optional[int]:
+    def append_command(self, command) -> int | None:
         if isinstance(command, str):
             command = command.encode()
         elif not isinstance(command, (bytes, bytearray)):

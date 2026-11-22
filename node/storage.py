@@ -4,8 +4,7 @@ import json
 import os
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS raft_state (
@@ -62,7 +61,7 @@ class Storage:
             self._conn.close()
 
     # ---- raft state ----
-    def get_raft_state(self, key: str) -> Optional[str]:
+    def get_raft_state(self, key: str) -> str | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT value FROM raft_state WHERE key = ?", (key,)
@@ -93,7 +92,7 @@ class Storage:
             self._conn.commit()
             return idx
 
-    def get_log(self, idx: int) -> Optional[Dict[str, Any]]:
+    def get_log(self, idx: int) -> dict[str, Any] | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT idx, term, command FROM raft_log WHERE idx = ?", (idx,)
@@ -103,7 +102,7 @@ class Storage:
                 return None
             return {"idx": row[0], "term": row[1], "command": bytes(row[2]) if row[2] is not None else b""}
 
-    def get_log_from(self, idx: int) -> List[Dict[str, Any]]:
+    def get_log_from(self, idx: int) -> list[dict[str, Any]]:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT idx, term, command FROM raft_log WHERE idx >= ? ORDER BY idx ASC",
@@ -127,7 +126,7 @@ class Storage:
             )
             self._conn.commit()
 
-    def last_log(self) -> Optional[Dict[str, Any]]:
+    def last_log(self) -> dict[str, Any] | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT idx, term, command FROM raft_log ORDER BY idx DESC LIMIT 1"
@@ -145,7 +144,7 @@ class Storage:
         version: int,
         size: int,
         checksum: str,
-        owners: List[str],
+        owners: list[str],
     ) -> None:
         owners_json = json.dumps(owners)
         with self._lock:
@@ -160,7 +159,7 @@ class Storage:
             )
             self._conn.commit()
 
-    def get_meta(self, key: str) -> Optional[Dict[str, Any]]:
+    def get_meta(self, key: str) -> dict[str, Any] | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT key, mode, version, size, checksum, owners FROM meta WHERE key = ?",
@@ -179,7 +178,7 @@ class Storage:
                 "owners": owners,
             }
 
-    def list_meta_keys(self) -> List[str]:
+    def list_meta_keys(self) -> list[str]:
         with self._lock:
             cur = self._conn.execute("SELECT key FROM meta ORDER BY key ASC")
             return [r[0] for r in cur.fetchall()]
@@ -195,7 +194,7 @@ class Storage:
             )
             self._conn.commit()
 
-    def fetch_shard(self, key: str, idx: int) -> Optional[bytes]:
+    def fetch_shard(self, key: str, idx: int) -> bytes | None:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT blob FROM shards WHERE key = ? AND idx = ?", (key, idx)
@@ -219,7 +218,7 @@ class Storage:
             )
             self._conn.commit()
 
-    def list_for_node(self, node_index: int) -> List[str]:
+    def list_for_node(self, node_index: int) -> list[str]:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT DISTINCT key FROM shards WHERE idx = ? ORDER BY key ASC",

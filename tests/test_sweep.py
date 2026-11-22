@@ -3,14 +3,14 @@ import sys
 import time
 
 try:
-    from node.storage import Storage
-    from node.repair import RepairSweeper
     from node.encode import RS32Engine
+    from node.repair import RepairSweeper
+    from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from node.storage import Storage  # type: ignore
-    from node.repair import RepairSweeper  # type: ignore
     from node.encode import RS32Engine  # type: ignore
+    from node.repair import RepairSweeper  # type: ignore
+    from node.storage import Storage  # type: ignore
 
 
 class FakeTransport:

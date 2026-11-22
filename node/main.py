@@ -19,14 +19,15 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 try:
-    from node.storage import Storage
     from node.raft import RaftNode
-    from node.server import NodeService, GrpcTransport, AuthInterceptor
+    from node.server import AuthInterceptor, GrpcTransport, NodeService
+    from node.storage import Storage
 except Exception:  # pragma: no cover - running from node/ directly
     sys.path.insert(0, os.path.dirname(__file__))
-    from storage import Storage  # type: ignore
+    from server import AuthInterceptor, GrpcTransport, NodeService  # type: ignore
+
     from raft import RaftNode  # type: ignore
-    from server import NodeService, GrpcTransport, AuthInterceptor  # type: ignore
+    from storage import Storage  # type: ignore
 
 try:
     from node.logging import get_logger, log_event

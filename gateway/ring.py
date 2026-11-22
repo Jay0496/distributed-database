@@ -2,7 +2,6 @@
 
 import bisect
 import hashlib
-from typing import List
 
 
 class ConsistentHashRing:
@@ -45,7 +44,7 @@ class ConsistentHashRing:
             idx = 0
         return self._ring[self._sorted[idx]]
 
-    def nodes(self) -> List[str]:
+    def nodes(self) -> list[str]:
         return sorted(self._nodes)
 
     def __len__(self) -> int:

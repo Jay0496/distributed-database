@@ -1,22 +1,18 @@
 import os
 import sys
 import time
-import tempfile
-import shutil
-
-import pytest
 
 try:
-    from node.storage import Storage
-    from node.raft import RaftNode, DirectTransport
-    from node.server import NodeService
     import gen.kv_pb2 as kv_pb2
+    from node.raft import DirectTransport, RaftNode
+    from node.server import NodeService
+    from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from node.storage import Storage  # type: ignore
-    from node.raft import RaftNode, DirectTransport  # type: ignore
-    from node.server import NodeService  # type: ignore
     import gen.kv_pb2 as kv_pb2  # type: ignore
+    from node.raft import DirectTransport, RaftNode  # type: ignore
+    from node.server import NodeService  # type: ignore
+    from node.storage import Storage  # type: ignore
 
 
 def _make_cluster(tmp_path):

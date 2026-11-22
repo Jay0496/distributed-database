@@ -1,7 +1,5 @@
 import threading
 
-import pytest
-
 from node.storage import Storage
 
 

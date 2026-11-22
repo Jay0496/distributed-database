@@ -4,11 +4,11 @@ import sys
 import time
 
 try:
-    from node.raft import RaftNode, DirectTransport, RaftLogEntry
+    from node.raft import RaftLogEntry, RaftNode
     from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from raft import RaftNode, DirectTransport, RaftLogEntry  # type: ignore
+    from raft import RaftLogEntry, RaftNode  # type: ignore
     from storage import Storage  # type: ignore
 
 

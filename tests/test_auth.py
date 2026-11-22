@@ -6,19 +6,20 @@ import grpc
 import pytest
 
 try:
-    from node.server import NodeService, AuthInterceptor
-    from node.storage import Storage
-    from node.raft import RaftNode
     import gen.kv_pb2 as kv_pb2
     import gen.kv_pb2_grpc as kv_pb2_grpc
+    from node.raft import RaftNode
+    from node.server import AuthInterceptor, NodeService
+    from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "node"))
-    from server import NodeService, AuthInterceptor  # type: ignore
-    from storage import Storage  # type: ignore
-    from raft import RaftNode  # type: ignore
+    from server import AuthInterceptor, NodeService  # type: ignore
+
     import gen.kv_pb2 as kv_pb2  # type: ignore
     import gen.kv_pb2_grpc as kv_pb2_grpc  # type: ignore
+    from raft import RaftNode  # type: ignore
+    from storage import Storage  # type: ignore
 
 from concurrent import futures
 

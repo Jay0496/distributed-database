@@ -15,24 +15,24 @@ import hashlib
 import os
 import sys
 from abc import ABC, abstractmethod
-from typing import List, Optional, Sequence
+from collections.abc import Sequence
 
 try:
-    from reedsolo import RSCodec, ReedSolomonError
+    from reedsolo import ReedSolomonError, RSCodec
 except Exception:  # pragma: no cover - fallback import path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from reedsolo import RSCodec, ReedSolomonError  # type: ignore
+    from reedsolo import ReedSolomonError, RSCodec  # type: ignore
 
 
 class RedundancyEngine(ABC):
     """Common interface for redundancy strategies."""
 
     @abstractmethod
-    def encode(self, data: bytes) -> List[bytes]:
+    def encode(self, data: bytes) -> list[bytes]:
         """Encode ``data`` into exactly 5 shards."""
 
     @abstractmethod
-    def decode(self, shards: Sequence[Optional[bytes]]) -> bytes:
+    def decode(self, shards: Sequence[bytes | None]) -> bytes:
         """Reconstruct the original bytes from (possibly partial/corrupt) shards."""
 
     @abstractmethod
@@ -59,7 +59,7 @@ class RS32Engine(RedundancyEngine):
     def required(self) -> int:
         return 3
 
-    def encode(self, data: bytes) -> List[bytes]:
+    def encode(self, data: bytes) -> list[bytes]:
         data = bytes(data)
         # 4-byte big-endian length prefix so trailing zeros survive.
         payload = len(data).to_bytes(4, "big") + data
@@ -76,10 +76,10 @@ class RS32Engine(RedundancyEngine):
             for p in range(self.NPARITY):
                 parity_shards[p][pos] = codeword[self.NDATA + p]
 
-        shards: List[bytes] = [bytes(s) for s in data_shards] + [bytes(s) for s in parity_shards]
+        shards: list[bytes] = [bytes(s) for s in data_shards] + [bytes(s) for s in parity_shards]
         return shards
 
-    def decode(self, shards: Sequence[Optional[bytes]]) -> bytes:
+    def decode(self, shards: Sequence[bytes | None]) -> bytes:
         # Normalize to exactly 5 entries.
         shards = list(shards)
         if len(shards) < self.NSHARDS:
@@ -95,8 +95,8 @@ class RS32Engine(RedundancyEngine):
             return b""
 
         # Pad missing/truncated shards with zeros and mark them as erasures.
-        padded: List[bytearray] = []
-        erasure_positions: List[int] = []
+        padded: list[bytearray] = []
+        erasure_positions: list[int] = []
         for idx, shard in enumerate(shards):
             if shard is None:
                 padded.append(bytearray(shard_len))
@@ -145,11 +145,11 @@ class ReplicationEngine(RedundancyEngine):
     def required(self) -> int:
         return 1
 
-    def encode(self, data: bytes) -> List[bytes]:
+    def encode(self, data: bytes) -> list[bytes]:
         data = bytes(data)
         return [bytes(data) for _ in range(self.NSHARDS)]
 
-    def decode(self, shards: Sequence[Optional[bytes]]) -> bytes:
+    def decode(self, shards: Sequence[bytes | None]) -> bytes:
         for shard in shards:
             if shard is not None:
                 return bytes(shard)

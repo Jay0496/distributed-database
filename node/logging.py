@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Field names whose values must never be logged in clear text.
 REDACTED_FIELDS = {
@@ -78,7 +78,7 @@ def _sanitize(fields):
 class JsonFormatter(logging.Formatter):
     def format(self, record):
         obj = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),

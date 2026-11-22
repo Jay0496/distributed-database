@@ -48,7 +48,17 @@ def main(argv=None) -> None:
     client = GatewayClient(peers)
 
     if args.command == "status":
-        print(json.dumps(client.status()))
+        st = client.status()
+        print(
+            json.dumps(
+                {
+                    "leader": st.get("leader"),
+                    "degraded": st.get("degraded", []),
+                    "mode": st.get("mode"),
+                    "key_count": st.get("key_count", 0),
+                }
+            )
+        )
         return
     if args.command == "mode":
         ok = client.set_mode(args.mode)

@@ -9,6 +9,7 @@ services:
       NODE_ID: node1
       NODE_PORT: "50051"
       DATA_DIR: /data
+      TOKEN: ${TOKEN:-}
     volumes:
       - node1_data:/data
     healthcheck:
@@ -28,6 +29,7 @@ services:
       NODE_ID: node2
       NODE_PORT: "50052"
       DATA_DIR: /data
+      TOKEN: ${TOKEN:-}
     volumes:
       - node2_data:/data
     healthcheck:
@@ -47,6 +49,7 @@ services:
       NODE_ID: node3
       NODE_PORT: "50053"
       DATA_DIR: /data
+      TOKEN: ${TOKEN:-}
     volumes:
       - node3_data:/data
     healthcheck:
@@ -66,6 +69,7 @@ services:
       NODE_ID: node4
       NODE_PORT: "50054"
       DATA_DIR: /data
+      TOKEN: ${TOKEN:-}
     volumes:
       - node4_data:/data
     healthcheck:
@@ -85,6 +89,7 @@ services:
       NODE_ID: node5
       NODE_PORT: "50055"
       DATA_DIR: /data
+      TOKEN: ${TOKEN:-}
     volumes:
       - node5_data:/data
     healthcheck:
@@ -100,6 +105,7 @@ services:
     build: .
     environment:
       PEERS: "node1:50051,node2:50052,node3:50053,node4:50054,node5:50055"
+      TOKEN: ${TOKEN:-}
     command: ["sleep", "infinity"]
     depends_on:
       - node1
@@ -112,6 +118,8 @@ services:
     profiles: ["test"]
     build: .
     command: ["pytest", "-q"]
+    environment:
+      TOKEN: ${TOKEN:-}
 
 volumes:
   node1_data:

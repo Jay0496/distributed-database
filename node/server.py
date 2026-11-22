@@ -148,6 +148,8 @@ class NodeService(kv_pb2_grpc.KVServicer):
 
         mode = meta.get("mode")
         version = int(meta.get("version", 0) or 0)
+        size = int(meta.get("size", 0) or 0)
+        checksum = meta.get("checksum")
         owners = list(meta.get("owners") or [])
 
         nslots = 5
@@ -218,6 +220,13 @@ class NodeService(kv_pb2_grpc.KVServicer):
             decoded = engine.decode(shards)
         except Exception as exc:
             return kv_pb2.GetResponse(value=b"", found=False, error=str(exc))
+
+        import hashlib
+        if len(decoded) != size:
+            return kv_pb2.GetResponse(value=b"", found=False, error="size mismatch")
+        if checksum is not None and checksum != "":
+            if hashlib.sha256(decoded).hexdigest() != str(checksum):
+                return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
 
         return kv_pb2.GetResponse(value=bytes(decoded), found=True, version=version)
 

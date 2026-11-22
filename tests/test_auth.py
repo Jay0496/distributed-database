@@ -9,7 +9,8 @@ try:
     import gen.kv_pb2 as kv_pb2
     import gen.kv_pb2_grpc as kv_pb2_grpc
     from node.raft import RaftNode
-    from node.server import AuthInterceptor, NodeService
+    from node.auth import AuthInterceptor
+    from node.server import NodeService
     from node.storage import Storage
 except Exception:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

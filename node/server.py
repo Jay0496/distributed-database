@@ -508,56 +508,7 @@ class NodeService(kv_pb2_grpc.KVServicer):
         )
         return kv_pb2.RequestVoteResponse(term=int(term), vote_granted=bool(granted))
 
-class AuthInterceptor(grpc.ServerInterceptor):
-    """Unary server interceptor enforcing a shared bearer token.
-
-    Auth is disabled when TOKEN is empty.
-    """
-
-    def intercept_service(self, continuation, handler_call_details):
-        token = _get_token()
-        if not token:
-            return continuation(handler_call_details)
-
-        provided = None
-        metadata = getattr(handler_call_details, "invocation_metadata", None) or ()
-        for key, value in metadata:
-            if str(key).lower() == "authorization":
-                provided = value
-                break
-
-        ok = False
-        if isinstance(provided, str) and provided.startswith("Bearer "):
-            candidate = provided[len("Bearer "):]
-            try:
-                ok = hmac.compare_digest(token, candidate)
-            except Exception:
-                ok = False
-        elif isinstance(provided, (bytes, bytearray)):
-            try:
-                text = provided.decode("utf-8", "replace")
-            except Exception:
-                text = ""
-            if text.startswith("Bearer "):
-                candidate = text[len("Bearer "):]
-                try:
-                    ok = hmac.compare_digest(token, candidate)
-                except Exception:
-                    ok = False
-
-        if not ok:
-            def _abort(request, context):
-                try:
-                    context.abort(grpc.StatusCode.UNAUTHENTICATED, "unauthenticated")
-                except Exception:
-                    pass
-
-            return grpc.unary_unary_rpc_method_handler(_abort)
-
-        return continuation(handler_call_details)
-
-
-# Backward-compat re-export: GrpcTransport lives in node.transport.
+# Backward-compat re-exports.
 try:
     from node.transport import GrpcTransport
 except Exception:  # pragma: no cover
@@ -565,6 +516,14 @@ except Exception:  # pragma: no cover
         from transport import GrpcTransport  # type: ignore
     except Exception:
         pass
+try:
+    from node.auth import AuthInterceptor
+except Exception:  # pragma: no cover
+    try:
+        from auth import AuthInterceptor  # type: ignore
+    except Exception:
+        pass
+
 
 def serve(node_id, storage, raft, port, max_workers=16):
     """Helper to build a grpc server (used by main.py and tests)."""

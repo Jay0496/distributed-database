@@ -179,22 +179,10 @@ class RaftNode:
                 pass
 
     def _persist_term(self) -> None:
-        if self.storage is None:
-            return
-        try:
-            self.storage.set_raft_state("current_term", str(self.current_term))
-        except Exception:
-            pass
+        self._persist_state()
 
     def _persist_voted_for(self) -> None:
-        if self.storage is None:
-            return
-        try:
-            self.storage.set_raft_state(
-                "voted_for", self.voted_for if self.voted_for is not None else ""
-            )
-        except Exception:
-            pass
+        self._persist_state()
 
     def _persist_state(self) -> None:
         if self.storage is None:
@@ -327,7 +315,6 @@ class RaftNode:
                 self.state = self.FOLLOWER
                 self._leader_id = None
                 self._persist_state()
-                self._persist_state()
                 self._reset_election_timer()
 
             if term < self.current_term:
@@ -361,7 +348,6 @@ class RaftNode:
                 self.voted_for = None
                 self.state = self.FOLLOWER
                 self._leader_id = None
-                self._persist_state()
                 self._persist_state()
 
             self._leader_id = leader_id
@@ -481,7 +467,6 @@ class RaftNode:
             self._leader_id = None
             term = self.current_term
             self._persist_state()
-            self._persist_state()
             self._reset_election_timer()
 
         last_idx = self.last_log_index()
@@ -523,7 +508,6 @@ class RaftNode:
                     self.voted_for = None
                     self.state = self.FOLLOWER
                     self._leader_id = None
-                    self._persist_state()
                     self._persist_state()
                     self._reset_election_timer()
                     return
@@ -585,7 +569,6 @@ class RaftNode:
                         self.voted_for = None
                         self.state = self.FOLLOWER
                         self._leader_id = None
-                        self._persist_state()
                         self._persist_state()
                         self._reset_election_timer()
                 return

@@ -646,3 +646,31 @@ class DirectTransport:
             req_dict.get("entries", []),
             req_dict["leader_commit"],
         )
+
+    def store_shard(self, peer_id, key, shard_index, version, data):
+        node = self._node(peer_id)
+        if node is None:
+            return False
+        try:
+            node.storage.store_shard(key, int(shard_index), int(version), bytes(data))
+            return True
+        except Exception:
+            return False
+
+    def fetch_shard(self, peer_id, key, shard_index):
+        node = self._node(peer_id)
+        if node is None:
+            return None
+        try:
+            return node.storage.fetch_shard(key, int(shard_index))
+        except Exception:
+            return None
+
+    def has_shard(self, peer_id, key, shard_index):
+        node = self._node(peer_id)
+        if node is None:
+            return False
+        try:
+            return bool(node.storage.has_shard(key, int(shard_index)))
+        except Exception:
+            return False

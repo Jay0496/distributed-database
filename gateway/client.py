@@ -33,6 +33,8 @@ class GatewayClient:
         for addr in self.peers:
             self._ensure_channel(addr)
         self._leader = None
+        self._leader_id = None
+        self._leader_addr = None
         self._last_resp = None
         self._mode = None
         self.ring = None
@@ -92,6 +94,16 @@ class GatewayClient:
             return None
         if leader in self.peers:
             return leader
+        # leader is usually a node id like "node2"; map to the peer address
+        # by its trailing index before falling back to fuzzy host matching.
+        import re as _re
+        m = _re.search(r"(\d+)\s*$", str(leader))
+        if m:
+            idx = int(m.group(1))
+            if 1 <= idx <= len(self.peers):
+                return self.peers[idx - 1]
+            if 0 <= idx < len(self.peers):
+                return self.peers[idx]
         for p in self.peers:
             host = p.split(":")[0]
             if host == leader or p == leader:
@@ -118,28 +130,30 @@ class GatewayClient:
                     counts[l] = counts.get(l, 0) + 1
             if counts:
                 leader_id = max(counts.items(), key=lambda kv: kv[1])[0]
-                self._leader = self._map_leader_to_addr(leader_id)
+                self._leader_id = leader_id
+                self._leader_addr = self._map_leader_to_addr(leader_id)
+                self._leader = self._leader_addr
                 for addr, resp in responses:
                     if (getattr(resp, "leader", "") or "") == leader_id:
                         self._last_resp = resp
                         break
                 if self._last_resp is None and responses:
                     self._last_resp = responses[0][1]
-                return self._leader
+                return self._leader_addr
             time.sleep(0.1 * (attempt + 1))
         return self._leader
 
     def get_leader_stub(self):
         """Return stub for cached leader, rediscovering on failure."""
-        if self._leader is None:
+        if self._leader_addr is None:
             self.discover_leader()
-        if self._leader in self._stubs:
-            stub = self._stubs.get(self._leader)
+        if self._leader_addr in self._stubs:
+            stub = self._stubs.get(self._leader_addr)
             if stub is not None:
                 return stub
         self.discover_leader()
-        if self._leader in self._stubs:
-            stub = self._stubs.get(self._leader)
+        if self._leader_addr in self._stubs:
+            stub = self._stubs.get(self._leader_addr)
             if stub is not None:
                 return stub
         # fallback: first available peer
@@ -163,17 +177,22 @@ class GatewayClient:
         """Return dict: leader, degraded, mode, key_count."""
         resp = self._leader_response()
         if resp is None:
+            self._leader_id = None
+            self._leader_addr = None
             self._leader = None
             self.discover_leader()
             resp = self._leader_response()
         if resp is None:
-            return {"leader": self._leader, "degraded": [], "mode": None, "key_count": 0}
-        if self._leader is None:
-            self._leader = self._map_leader_to_addr(getattr(resp, "leader", None))
+            return {"leader": self._leader_id, "degraded": [], "mode": None, "key_count": 0}
+        if self._leader_id is None:
+            lid = getattr(resp, "leader", None)
+            self._leader_id = lid
+            self._leader_addr = self._map_leader_to_addr(lid)
+            self._leader = self._leader_addr
         mode = getattr(resp, "mode", None)
         self._mode = mode
         return {
-            "leader": self._leader if self._leader is not None else getattr(resp, "leader", None),
+            "leader": self._leader_id if self._leader_id is not None else getattr(resp, "leader", None),
             "degraded": list(getattr(resp, "degraded", []) or []),
             "mode": mode,
             "key_count": int(getattr(resp, "key_count", 0) or 0),
@@ -192,17 +211,19 @@ class GatewayClient:
             return False
 
 
-    def put(self, key, value, mode=None) -> bool:
+    def put(self, key, value, mode=None):
         if isinstance(value, str):
             value = value.encode("utf-8")
         value = bytes(value) if value is not None else b""
 
         def _do(stub):
             resp = stub.Put(kv_pb2.PutRequest(key=key, value=value, mode=mode or ""), timeout=2.0)
-            return bool(getattr(resp, "ok", False))
+            if not getattr(resp, "ok", False):
+                raise RuntimeError(getattr(resp, "error", "put failed") or "put failed")
+            return int(getattr(resp, "version", 0) or 0)
 
         try:
-            return bool(self.call_with_retry(_do))
+            return self.call_with_retry(_do)
         except Exception:
             return False
 
@@ -224,6 +245,8 @@ class GatewayClient:
         for attempt in range(3):
             stub = self.get_leader_stub()
             if stub is None:
+                self._leader_id = None
+                self._leader_addr = None
                 self._leader = None
                 self.discover_leader()
                 stub = self.get_leader_stub()
@@ -235,6 +258,8 @@ class GatewayClient:
                 return fn(stub)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                self._leader_id = None
+                self._leader_addr = None
                 self._leader = None
                 try:
                     self.discover_leader()

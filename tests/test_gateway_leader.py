@@ -72,5 +72,5 @@ def test_leader_failover_rediscovery():
     assert state["mode"] == "replication"
 
     # put/get plumbing
-    assert client.put("k", "v") is True
+    assert client.put("k", "v") == 1
     assert client.get("k") is None

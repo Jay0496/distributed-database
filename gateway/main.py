@@ -55,8 +55,11 @@ def main(argv=None) -> None:
         print(json.dumps({"ok": bool(ok), "mode": args.mode}))
         return
     if args.command == "put":
-        ok = client.put(args.key, args.value, mode=args.mode)
-        print(json.dumps({"ok": bool(ok)}))
+        version = client.put(args.key, args.value, mode=args.mode)
+        if version:
+            print(json.dumps({"ok": True, "version": int(version)}))
+        else:
+            print(json.dumps({"ok": False}))
         return
     if args.command == "get":
         val = client.get(args.key)

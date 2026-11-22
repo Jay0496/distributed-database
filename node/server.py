@@ -41,24 +41,95 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.ListKeysResponse(keys=keys)
 
     def Put(self, request, context):
+        import time
         key = request.key
         value = bytes(request.value or b"")
-        mode = request.mode or (self.storage.get_raft_state("default_mode") or "rs32")
+        mode = (request.mode or "").strip()
+        if not mode:
+            try:
+                mode = self.storage.get_raft_state("default_mode") or "rs32"
+            except Exception:
+                mode = "rs32"
         if self.raft is not None:
             if not self.raft.is_leader():
                 return kv_pb2.PutResponse(ok=False, error="not leader")
             try:
+                import hashlib
+                meta = None
+                try:
+                    meta = self.storage.get_meta(key)
+                except Exception:
+                    meta = None
+                version = 1
+                if isinstance(meta, dict):
+                    try:
+                        version = int(meta.get("version", 0) or 0) + 1
+                    except Exception:
+                        version = 1
+                checksum = hashlib.sha256(value).hexdigest()
+                size = len(value)
+                try:
+                    from node.encode import RS32Engine, ReplicationEngine
+                except Exception:
+                    import os as _os, sys as _sys
+                    _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+                    from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+                engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
+                shards = list(engine.encode(value))  # len 5
+                owners = sorted(set([self.node_id] + list(getattr(self.raft, "peers", []) or [])))
+                transport = getattr(self.raft, "transport", None)
+
+                import concurrent.futures
+
+                def _store_one(i):
+                    owner = owners[i]
+                    data = shards[i] if i < len(shards) else b""
+                    if owner == self.node_id:
+                        try:
+                            self.storage.store_shard(key, i, version, bytes(data))
+                            return True
+                        except Exception:
+                            return False
+                    if transport is not None and hasattr(transport, "store_shard"):
+                        try:
+                            return bool(transport.store_shard(owner, key, i, version, bytes(data)))
+                        except Exception:
+                            return False
+                    return False
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(owners))) as ex:
+                    futs = [ex.submit(_store_one, i) for i in range(len(owners))]
+                    results = [f.result() for f in futs]
+                if len(results) != len(owners) or not all(results):
+                    return kv_pb2.PutResponse(ok=False, error="store shard failed")
+
                 import json as _json
                 cmd = _json.dumps(
-                    {"op": "put", "key": key, "mode": mode, "version": 1, "size": len(value),
-                     "checksum": "", "owners": []}
+                    {
+                        "op": "put",
+                        "key": key,
+                        "mode": mode,
+                        "version": version,
+                        "size": size,
+                        "checksum": checksum,
+                        "owners": owners,
+                    }
                 ).encode("utf-8")
                 idx = self.raft.append_command(cmd)
                 if idx is None:
                     return kv_pb2.PutResponse(ok=False, error="not leader")
-            except Exception as exc:  # pragma: no cover
+
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    if getattr(self.raft, "commit_index", 0) >= idx:
+                        break
+                    time.sleep(0.05)
+                if getattr(self.raft, "commit_index", 0) < idx:
+                    return kv_pb2.PutResponse(ok=False, error="commit timeout")
+
+                return kv_pb2.PutResponse(ok=True, version=version)
+            except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))
-            return kv_pb2.PutResponse(ok=True, version=1)
         try:
             self.storage.set_raft_state("default_mode", mode)
         except Exception:

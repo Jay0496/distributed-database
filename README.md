@@ -79,6 +79,20 @@ See `scripts/demo.sh` for a labeled, end-to-end demo:
 bash scripts/demo.sh
 ```
 
+## Documentation
+
+Detailed design docs with Mermaid diagrams live in [`docs/`](docs/):
+
+- [Diagrams index](docs/DIAGRAMS.md)
+- [Architecture & deployment](docs/ARCHITECTURE.md)
+- [Raft consensus](docs/RAFT.md)
+- [Write path](docs/WRITE_PATH.md) / [Read path](docs/READ_PATH.md)
+- [Redundancy & encoding](docs/REDUNDANCY.md)
+- [Failure recovery](docs/FAILURE_RECOVERY.md)
+- [Routing](docs/ROUTING.md) / [Data model](docs/DATA_MODEL.md)
+- [Security](docs/SECURITY.md) / [API](docs/API.md)
+- [Testing](docs/TESTING.md) / [Demo](docs/DEMO.md)
+
 ## Logs
 
 Nodes emit structured JSON logs (one object per line) to stdout. Look for:

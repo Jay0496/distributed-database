@@ -205,8 +205,21 @@ class NodeService(kv_pb2_grpc.KVServicer):
         except Exception:
             pass
 
-        # Shards fetched; reconstruction handled in a later step.
-        return kv_pb2.GetResponse(value=b"", found=True, version=version)
+        try:
+            from node.encode import RS32Engine, ReplicationEngine
+        except Exception:
+            import os as _os, sys as _sys
+            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+            from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+
+        engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
+
+        try:
+            decoded = engine.decode(shards)
+        except Exception as exc:
+            return kv_pb2.GetResponse(value=b"", found=False, error=str(exc))
+
+        return kv_pb2.GetResponse(value=bytes(decoded), found=True, version=version)
 
     def SetMode(self, request, context):
         mode = request.mode

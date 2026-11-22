@@ -80,12 +80,28 @@ class GatewayClient:
             self._ensure_channel(addr)
         return self._stubs.get(addr)
 
+    def _auth_token(self):
+        token = getattr(self, "token", None)
+        if token is None:
+            token = os.environ.get("TOKEN", "")
+        return token or ""
+
+    def _metadata(self):
+        token = self._auth_token()
+        if not token:
+            return None
+        return [("authorization", "Bearer %s" % token)]
+
     def _call_get_leader(self, addr):
         stub = self._stub(addr)
         if stub is None:
             return None
         try:
-            return stub.GetLeader(kv_pb2.GetLeaderRequest(), timeout=2.0)
+            md = self._metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            return stub.GetLeader(kv_pb2.GetLeaderRequest(), **kwargs)
         except Exception:
             return None
 
@@ -169,7 +185,11 @@ class GatewayClient:
         if stub is None:
             return None
         try:
-            return stub.GetLeader(kv_pb2.GetLeaderRequest(), timeout=2.0)
+            md = self._metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            return stub.GetLeader(kv_pb2.GetLeaderRequest(), **kwargs)
         except Exception:
             return None
 
@@ -218,7 +238,11 @@ class GatewayClient:
     def set_mode(self, mode) -> bool:
         """Set cluster default mode via leader."""
         def _do(stub):
-            resp = stub.SetMode(kv_pb2.SetModeRequest(mode=mode), timeout=2.0)
+            md = self._metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            resp = stub.SetMode(kv_pb2.SetModeRequest(mode=mode), **kwargs)
             return bool(getattr(resp, "ok", False))
         try:
             return bool(self.call_with_retry(_do))
@@ -232,7 +256,11 @@ class GatewayClient:
         value = bytes(value) if value is not None else b""
 
         def _do(stub):
-            resp = stub.Put(kv_pb2.PutRequest(key=key, value=value, mode=mode or ""), timeout=2.0)
+            md = self._metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            resp = stub.Put(kv_pb2.PutRequest(key=key, value=value, mode=mode or ""), **kwargs)
             if not getattr(resp, "ok", False):
                 raise RuntimeError(getattr(resp, "error", "put failed") or "put failed")
             return int(getattr(resp, "version", 0) or 0)
@@ -244,7 +272,11 @@ class GatewayClient:
 
     def get(self, key):
         def _do(stub):
-            resp = stub.Get(kv_pb2.GetRequest(key=key), timeout=2.0)
+            md = self._metadata()
+            kwargs = {"timeout": 2.0}
+            if md is not None:
+                kwargs["metadata"] = md
+            resp = stub.Get(kv_pb2.GetRequest(key=key), **kwargs)
             if not getattr(resp, "found", False):
                 err = getattr(resp, "error", "") or ""
                 if err and err != "not found":

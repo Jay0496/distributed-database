@@ -7,24 +7,24 @@ rebuilt by scheduling a best-effort background ``StoreShard`` to their owner.
 
 import threading
 import time
+from typing import Any, Callable, List, Optional, Sequence
 
 try:
-    from node.encode import ReplicationEngine, RS32Engine
+    from node.encode import RS32Engine, ReplicationEngine
 except Exception:  # pragma: no cover - alternate import paths
     try:
-        from encode import ReplicationEngine, RS32Engine  # type: ignore
+        from encode import RS32Engine, ReplicationEngine  # type: ignore
     except Exception:
         try:
-            import os as _os
-            import sys as _sys
+            import os as _os, sys as _sys
             _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
-            from node.encode import ReplicationEngine, RS32Engine  # type: ignore
+            from node.encode import RS32Engine, ReplicationEngine  # type: ignore
         except Exception:
             RS32Engine = None  # type: ignore
             ReplicationEngine = None  # type: ignore
 
 
-def read_repair(engine, shards, canonical_shards, owners, transport, key, version, log=print) -> list[int]:
+def read_repair(engine, shards, canonical_shards, owners, transport, key, version, log=print) -> List[int]:
     shards = list(shards) if shards is not None else []
     canonical_shards = list(canonical_shards) if canonical_shards is not None else []
     n = max(len(shards), len(canonical_shards), 5)
@@ -39,7 +39,7 @@ def read_repair(engine, shards, canonical_shards, owners, transport, key, versio
         while len(owners) < n:
             owners.append(None)
 
-    repaired: list[int] = []
+    repaired: List[int] = []
     for i in range(n):
         if i >= len(canonical_shards) or canonical_shards[i] is None:
             continue
@@ -171,6 +171,104 @@ class RepairSweeper:
             pass
 
 
+def _collect_keys(transport, peers=None):
+    if peers is None:
+        try:
+            peers = list(getattr(transport, "peers", []) or [])
+        except Exception:
+            peers = []
+    keys = set()
+    for peer in (peers or []):
+        try:
+            keys.update(transport.list_keys(peer) or [])
+        except Exception:
+            try:
+                keys.update(transport.ListKeys(peer) or [])
+            except Exception:
+                pass
+    return keys
+
+
+def _fetch_shard(transport, peer, key, shard_index):
+    data = None
+    try:
+        data = transport.fetch_shard(peer, key, shard_index)
+    except Exception:
+        data = None
+    if data is None:
+        try:
+            if hasattr(transport, "FetchShard"):
+                res = transport.FetchShard(peer, key, shard_index)
+                if isinstance(res, (bytes, bytearray)):
+                    data = bytes(res)
+        except Exception:
+            data = None
+    if data is not None:
+        try:
+            data = bytes(data)
+        except Exception:
+            pass
+    return data
+
+
+def _reconstruct_missing(node_id, node_index, key, idx, version, mode, owners, transport, peers, storage, log=print):
+    """Fallback reconstruction of a missing shard. Returns True if stored."""
+    try:
+        engine_cls = RS32Engine if mode == "rs32" else (ReplicationEngine if mode else None)
+        if mode is None:
+            engine_cls = RS32Engine
+        if engine_cls is None:
+            raise RuntimeError("no engine")
+        engine = engine_cls()
+        peer_shards = []
+        _owners = owners if owners else [node_id]
+        for i, owner in enumerate(_owners):
+            if i == idx:
+                peer_shards.append(None)
+                continue
+            data = None
+            try:
+                data = transport.fetch_shard(owner, key, i)
+            except Exception:
+                data = None
+            if data is None:
+                for p in peers:
+                    try:
+                        data = transport.fetch_shard(p, key, i)
+                    except Exception:
+                        data = None
+                    if data is not None:
+                        break
+            peer_shards.append(data if data is None else bytes(data))
+        while len(peer_shards) < 5:
+            peer_shards.append(None)
+        decoded = engine.decode(peer_shards)
+        canonical = engine.encode(decoded)
+        if idx < len(canonical) and canonical[idx] is not None:
+            data = bytes(canonical[idx])
+            stored = False
+            try:
+                storage.store_shard(key, idx, version, data)
+                stored = True
+            except Exception:
+                stored = False
+            if not stored:
+                try:
+                    if hasattr(transport, "store_shard"):
+                        stored = bool(transport.store_shard(node_id, key, idx, version, data))
+                except Exception:
+                    stored = False
+            if stored:
+                try:
+                    log("sync pulled shard %d for %s" % (idx, key))
+                except Exception:
+                    pass
+            return stored
+    except Exception:
+        return False
+    return False
+
+
 def sync_on_start(node_id, node_index, storage, transport, log=print):
     """Pull shards this node should own immediately after Raft recovery.
 
@@ -193,18 +291,9 @@ def sync_on_start(node_id, node_index, storage, transport, log=print):
     except Exception:
         peers = []
 
-    keys = set()
-    for peer in peers:
-        try:
-            keys.update(transport.list_keys(peer) or [])
-        except Exception:
-            try:
-                keys.update(transport.ListKeys(peer) or [])
-            except Exception:
-                pass
+    keys = _collect_keys(transport, peers)
 
     for key in sorted(keys):
-        # Determine whether this node owns a shard for this key and which index.
         idx = node_index
         version = 0
         is_owner = True
@@ -259,27 +348,9 @@ def sync_on_start(node_id, node_index, storage, transport, log=print):
 
         pulled = False
         for peer in peers:
-            try:
-                data = transport.fetch_shard(peer, key, idx)
-            except Exception:
-                data = None
-            if data is None:
-                # Some transports signal presence with empty bytes? Treat None as missing.
-                pass
-            if data is None:
-                try:
-                    res = transport.FetchShard(peer, key, idx) if hasattr(transport, "FetchShard") else None
-                except Exception:
-                    res = None
-                if isinstance(res, (bytes, bytearray)):
-                    data = bytes(res)
+            data = _fetch_shard(transport, peer, key, idx)
             if data is None:
                 continue
-            try:
-                data = bytes(data)
-            except Exception:
-                continue
-            # Store locally.
             stored = False
             try:
                 storage.store_shard(key, idx, version, data)
@@ -301,66 +372,9 @@ def sync_on_start(node_id, node_index, storage, transport, log=print):
                     pass
                 break
         if not pulled and owners:
-            # Fallback: reconstruct this node's missing shard from the shards
-            # held by its peers (handles returning nodes whose own shard is absent
-            # from every peer).
-            try:
-                engine_cls = RS32Engine if mode == "rs32" else (ReplicationEngine if mode else None)
-                if mode is None:
-                    engine_cls = RS32Engine
-                if engine_cls is None:
-                    raise RuntimeError("no engine")
-                engine = engine_cls()
-                peer_shards = []
-                # owners may be None (fallback) -> treat as [node_id]+peers? Use given owners.
-                _owners = owners if owners else [node_id]
-                for i, owner in enumerate(_owners):
-                    if i == idx:
-                        # This node's own shard is the missing one.
-                        peer_shards.append(None)
-                        continue
-                    data = None
-                    # Fetch from the owner peer if possible, else any peer.
-                    try:
-                        data = transport.fetch_shard(owner, key, i)
-                    except Exception:
-                        data = None
-                    if data is None:
-                        for p in peers:
-                            try:
-                                data = transport.fetch_shard(p, key, i)
-                            except Exception:
-                                data = None
-                            if data is not None:
-                                break
-                    peer_shards.append(data if data is None else bytes(data))
-                # Pad to 5 slots if needed.
-                while len(peer_shards) < 5:
-                    peer_shards.append(None)
-                decoded = engine.decode(peer_shards)
-                canonical = engine.encode(decoded)
-                if idx < len(canonical) and canonical[idx] is not None:
-                    data = bytes(canonical[idx])
-                    stored = False
-                    try:
-                        storage.store_shard(key, idx, version, data)
-                        stored = True
-                    except Exception:
-                        stored = False
-                    if not stored:
-                        try:
-                            if hasattr(transport, "store_shard"):
-                                stored = bool(transport.store_shard(node_id, key, idx, version, data))
-                        except Exception:
-                            stored = False
-                    if stored:
-                        count += 1
-                        try:
-                            log("sync pulled shard %d for %s" % (idx, key))
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            stored = _reconstruct_missing(node_id, node_index, key, idx, version, mode, owners, transport, peers, storage, log=log)
+            if stored:
+                count += 1
 
     try:
         log("sync pulled %d shards" % count)
@@ -369,4 +383,4 @@ def sync_on_start(node_id, node_index, storage, transport, log=print):
     return count
 
 
-__all__ = ["read_repair", "RepairSweeper", "sync_on_start"]
+__all__ = ["read_repair", "RepairSweeper", "sync_on_start", "_collect_keys", "_fetch_shard", "_reconstruct_missing"]

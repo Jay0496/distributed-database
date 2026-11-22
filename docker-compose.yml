@@ -1,5 +1,6 @@
 services:
   node1:
+    container_name: node1
     build: .
     command: ["python", "-m", "node.main", "--id", "node1", "--port", "50051", "--peers", "node2:50052,node3:50053,node4:50054,node5:50055"]
     ports:
@@ -18,6 +19,7 @@ services:
       start_period: 5s
 
   node2:
+    container_name: node2
     build: .
     command: ["python", "-m", "node.main", "--id", "node2", "--port", "50052", "--peers", "node1:50051,node3:50053,node4:50054,node5:50055"]
     ports:
@@ -36,6 +38,7 @@ services:
       start_period: 5s
 
   node3:
+    container_name: node3
     build: .
     command: ["python", "-m", "node.main", "--id", "node3", "--port", "50053", "--peers", "node1:50051,node2:50052,node4:50054,node5:50055"]
     ports:
@@ -54,6 +57,7 @@ services:
       start_period: 5s
 
   node4:
+    container_name: node4
     build: .
     command: ["python", "-m", "node.main", "--id", "node4", "--port", "50054", "--peers", "node1:50051,node2:50052,node3:50053,node5:50055"]
     ports:
@@ -72,6 +76,7 @@ services:
       start_period: 5s
 
   node5:
+    container_name: node5
     build: .
     command: ["python", "-m", "node.main", "--id", "node5", "--port", "50055", "--peers", "node1:50051,node2:50052,node3:50053,node4:50054"]
     ports:
@@ -90,8 +95,11 @@ services:
       start_period: 5s
 
   gateway:
+    container_name: gateway
     profiles: ["tools"]
     build: .
+    environment:
+      PEERS: "node1:50051,node2:50052,node3:50053,node4:50054,node5:50055"
     command: ["sleep", "infinity"]
     depends_on:
       - node1

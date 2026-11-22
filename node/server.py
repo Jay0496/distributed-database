@@ -137,14 +137,98 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.PutResponse(ok=True, version=1)
 
     def Get(self, request, context):
+        key = request.key
         meta = None
         try:
-            meta = self.storage.get_meta(request.key)
+            meta = self.storage.get_meta(key)
         except Exception:
             meta = None
         if meta is None:
-            return kv_pb2.GetResponse(value=b"", found=False)
-        return kv_pb2.GetResponse(value=b"", found=True, version=int(meta.get("version", 0) or 0))
+            return kv_pb2.GetResponse(value=b"", found=False, error="not found")
+
+        mode = meta.get("mode")
+        version = int(meta.get("version", 0) or 0)
+        size = int(meta.get("size", 0) or 0)
+        checksum = meta.get("checksum")
+        owners = list(meta.get("owners") or [])
+
+        nslots = 5
+        shards = [None] * nslots
+        if len(owners) < nslots:
+            owners = owners + [None] * (nslots - len(owners))
+
+        transport = None
+        if getattr(self, "raft", None) is not None:
+            transport = getattr(self.raft, "transport", None)
+
+        import concurrent.futures
+
+        def fetch_one(i):
+            owner = owners[i] if i < len(owners) else None
+            if owner is None:
+                return i, None
+            if owner == self.node_id:
+                try:
+                    return i, self.storage.fetch_shard(key, i)
+                except Exception:
+                    return i, None
+            if transport is not None and hasattr(transport, "fetch_shard"):
+                try:
+                    return i, transport.fetch_shard(owner, key, i)
+                except Exception:
+                    return i, None
+            return i, None
+
+        future_to_i = {}
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, min(len(owners) or 1, 8))
+            ) as ex:
+                for i in range(nslots):
+                    future_to_i[ex.submit(fetch_one, i)] = i
+                try:
+                    for fut in concurrent.futures.as_completed(future_to_i, timeout=2.0):
+                        try:
+                            i, data = fut.result()
+                            if 0 <= i < nslots:
+                                shards[i] = data
+                        except Exception:
+                            i = future_to_i.get(fut)
+                            if i is not None and 0 <= i < nslots:
+                                shards[i] = None
+                except concurrent.futures.TimeoutError:
+                    pass
+                finally:
+                    for fut, i in list(future_to_i.items()):
+                        if not fut.done():
+                            fut.cancel()
+                            if 0 <= i < nslots:
+                                shards[i] = None
+        except Exception:
+            pass
+
+        try:
+            from node.encode import RS32Engine, ReplicationEngine
+        except Exception:
+            import os as _os, sys as _sys
+            _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), ".."))
+            from node.encode import RS32Engine, ReplicationEngine  # type: ignore
+
+        engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
+
+        try:
+            decoded = engine.decode(shards)
+        except Exception as exc:
+            return kv_pb2.GetResponse(value=b"", found=False, error=str(exc))
+
+        import hashlib
+        if len(decoded) != size:
+            return kv_pb2.GetResponse(value=b"", found=False, error="size mismatch")
+        if checksum is not None and checksum != "":
+            if hashlib.sha256(decoded).hexdigest() != str(checksum):
+                return kv_pb2.GetResponse(value=b"", found=False, error="checksum mismatch")
+
+        return kv_pb2.GetResponse(value=bytes(decoded), found=True, version=version)
 
     def SetMode(self, request, context):
         mode = request.mode

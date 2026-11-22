@@ -5,6 +5,8 @@ import random
 import threading
 import time
 
+from .direct_transport import _NODE_REGISTRY
+
 
 class RaftElection:
     """Election, RequestVote handling and election timers."""
@@ -116,6 +118,61 @@ class RaftElection:
         timeout = random.uniform(*self.election_timeout_range)
         self.election_deadline = time.monotonic() + timeout
 
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._stop_event.clear()
+        self._reset_election_timer()
+        self._thread = threading.Thread(target=self._run, daemon=True, name=f"raft-{self.node_id}")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        self._stop_event.set()
+        self._detector_stop.set()
+        t = self._detector_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=2.0)
+        self._detector_thread = None
+        t = self._thread
+        if t is not None and t.is_alive():
+            t.join(timeout=2.0)
+        self._thread = None
+        with contextlib.suppress(KeyError):
+            del _NODE_REGISTRY[self.node_id]
+
+    def is_leader(self) -> bool:
+        with self._lock:
+            return self.state == self.LEADER
+
+    def leader_id(self) -> str | None:
+        with self._lock:
+            if self.state == self.LEADER:
+                return self.node_id
+            return self._leader_id
+
+    def _run(self) -> None:
+        self._reset_election_timer()
+        while self._running:
+            if self.state == self.LEADER:
+                if self._detector_thread is None or not self._detector_thread.is_alive():
+                    self.start_failure_detector()
+                self._replication_round()
+                slept = 0.0
+                while slept < self.heartbeat_interval and self._running:
+                    time.sleep(min(0.01, self.heartbeat_interval - slept))
+                    slept += 0.01
+            else:
+                if self._detector_thread is not None:
+                    self.stop_failure_detector()
+                now = time.monotonic()
+                if now >= self.election_deadline:
+                    self._start_election()
+                else:
+                    wait = min(0.01, self.election_deadline - now)
+                    time.sleep(wait if wait > 0 else 0.001)
 
 def __getattr__(name):
     try:

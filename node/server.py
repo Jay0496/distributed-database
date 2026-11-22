@@ -41,6 +41,7 @@ class NodeService(kv_pb2_grpc.KVServicer):
         return kv_pb2.ListKeysResponse(keys=keys)
 
     def Put(self, request, context):
+        import time
         key = request.key
         value = bytes(request.value or b"")
         mode = (request.mode or "").strip()
@@ -101,6 +102,31 @@ class NodeService(kv_pb2_grpc.KVServicer):
                     results = [f.result() for f in futs]
                 if len(results) != len(owners) or not all(results):
                     return kv_pb2.PutResponse(ok=False, error="store shard failed")
+
+                import json as _json
+                cmd = _json.dumps(
+                    {
+                        "op": "put",
+                        "key": key,
+                        "mode": mode,
+                        "version": version,
+                        "size": size,
+                        "checksum": checksum,
+                        "owners": owners,
+                    }
+                ).encode("utf-8")
+                idx = self.raft.append_command(cmd)
+                if idx is None:
+                    return kv_pb2.PutResponse(ok=False, error="not leader")
+
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    if getattr(self.raft, "commit_index", 0) >= idx:
+                        break
+                    time.sleep(0.05)
+                if getattr(self.raft, "commit_index", 0) < idx:
+                    return kv_pb2.PutResponse(ok=False, error="commit timeout")
+
                 return kv_pb2.PutResponse(ok=True, version=version)
             except Exception as exc:
                 return kv_pb2.PutResponse(ok=False, error=str(exc))

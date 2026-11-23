@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import threading
 import time
 
 from gen import kv_pb2, kv_pb2_grpc
@@ -14,8 +15,21 @@ class NodeService(kv_pb2_grpc.KVServicer):
         self.raft = raft
         self.engine_factory = engine_factory
         self._own_degraded = set()
-        self._own_degraded_lock = __import__("threading").RLock()
+        self._own_degraded_lock = threading.RLock()
         self._own_last_seen = {}
+        # Serialize read-modify-write for the same key on the leader so
+        # concurrent PUTs cannot interleave shard writes or duplicate versions.
+        self._key_locks = {}
+        self._key_locks_guard = threading.Lock()
+
+    def _key_lock(self, key):
+        """Return the per-key lock used to serialize leader-side writes."""
+        with self._key_locks_guard:
+            lock = self._key_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[key] = lock
+            return lock
 
     @property
     def degraded(self):
@@ -149,88 +163,93 @@ class NodeService(kv_pb2_grpc.KVServicer):
         if self.raft is not None:
             if not self.raft.is_leader():
                 return kv_pb2.PutResponse(ok=False, error="not leader")
-            try:
-                import hashlib
-                meta = None
-                try:
-                    meta = self.storage.get_meta(key)
-                except Exception:
-                    meta = None
-                version = 1
-                if isinstance(meta, dict):
-                    try:
-                        version = int(meta.get("version", 0) or 0) + 1
-                    except Exception:
-                        version = 1
-                checksum = hashlib.sha256(value).hexdigest()
-                size = len(value)
-                from node.encode import ReplicationEngine, RS32Engine
-                engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
-                shards = list(engine.encode(value))  # len 5
-                owners = sorted(set([self.node_id] + list(getattr(self.raft, "peer_ids", []) or getattr(self.raft, "peers", []) or [])))
-                transport = getattr(self.raft, "transport", None)
-
-                import concurrent.futures
-
-                def _store_one(i):
-                    owner = owners[i]
-                    data = shards[i] if i < len(shards) else b""
-                    if owner == self.node_id:
-                        try:
-                            self.storage.store_shard(key, i, version, bytes(data))
-                            return True
-                        except Exception:
-                            return False
-                    # resolve node id -> peer address
-                    addr = owner
-                    pid_map = getattr(self.raft, "peer_id_map", {}) or {}
-                    for a, pid in (pid_map or {}).items():
-                        if pid == owner:
-                            addr = a
-                            break
-                    if transport is not None and hasattr(transport, "store_shard"):
-                        try:
-                            return bool(transport.store_shard(addr, key, i, version, bytes(data)))
-                        except Exception:
-                            return False
-                    return False
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(owners))) as ex:
-                    futs = [ex.submit(_store_one, i) for i in range(len(owners))]
-                    results = [f.result() for f in futs]
-                if len(results) != len(owners) or not all(results):
-                    return kv_pb2.PutResponse(ok=False, error="store shard failed")
-
-                import json as _json
-                cmd = _json.dumps(
-                    {
-                        "op": "put",
-                        "key": key,
-                        "mode": mode,
-                        "version": version,
-                        "size": size,
-                        "checksum": checksum,
-                        "owners": owners,
-                    }
-                ).encode("utf-8")
-                idx = self.raft.append_command(cmd)
-                if idx is None:
-                    return kv_pb2.PutResponse(ok=False, error="not leader")
-
-                deadline = time.time() + 3.0
-                while time.time() < deadline:
-                    if getattr(self.raft, "commit_index", 0) >= idx:
-                        break
-                    time.sleep(0.05)
-                if getattr(self.raft, "commit_index", 0) < idx:
-                    return kv_pb2.PutResponse(ok=False, error="commit timeout")
-
-                return kv_pb2.PutResponse(ok=True, version=version)
-            except Exception as exc:
-                return kv_pb2.PutResponse(ok=False, error=str(exc))
+            # Serialize same-key writes: version read -> shard writes -> Raft
+            # append must be atomic with respect to other PUTs for this key.
+            with self._key_lock(key):
+                return self._put_leader(key, value, mode)
         with contextlib.suppress(Exception):
             self.storage.set_raft_state("default_mode", mode)
         return kv_pb2.PutResponse(ok=True, version=1)
+
+    def _put_leader(self, key, value, mode):
+        try:
+            meta = None
+            try:
+                meta = self.storage.get_meta(key)
+            except Exception:
+                meta = None
+            version = 1
+            if isinstance(meta, dict):
+                try:
+                    version = int(meta.get("version", 0) or 0) + 1
+                except Exception:
+                    version = 1
+            checksum = hashlib.sha256(value).hexdigest()
+            size = len(value)
+            from node.encode import ReplicationEngine, RS32Engine
+            engine = RS32Engine() if mode == "rs32" else ReplicationEngine()
+            shards = list(engine.encode(value))  # len 5
+            owners = sorted(set([self.node_id] + list(getattr(self.raft, "peer_ids", []) or getattr(self.raft, "peers", []) or [])))
+            transport = getattr(self.raft, "transport", None)
+
+            import concurrent.futures
+
+            def _store_one(i):
+                owner = owners[i]
+                data = shards[i] if i < len(shards) else b""
+                if owner == self.node_id:
+                    try:
+                        self.storage.store_shard(key, i, version, bytes(data))
+                        return True
+                    except Exception:
+                        return False
+                # resolve node id -> peer address
+                addr = owner
+                pid_map = getattr(self.raft, "peer_id_map", {}) or {}
+                for a, pid in (pid_map or {}).items():
+                    if pid == owner:
+                        addr = a
+                        break
+                if transport is not None and hasattr(transport, "store_shard"):
+                    try:
+                        return bool(transport.store_shard(addr, key, i, version, bytes(data)))
+                    except Exception:
+                        return False
+                return False
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(owners))) as ex:
+                futs = [ex.submit(_store_one, i) for i in range(len(owners))]
+                results = [f.result() for f in futs]
+            if len(results) != len(owners) or not all(results):
+                return kv_pb2.PutResponse(ok=False, error="store shard failed")
+
+            import json as _json
+            cmd = _json.dumps(
+                {
+                    "op": "put",
+                    "key": key,
+                    "mode": mode,
+                    "version": version,
+                    "size": size,
+                    "checksum": checksum,
+                    "owners": owners,
+                }
+            ).encode("utf-8")
+            idx = self.raft.append_command(cmd)
+            if idx is None:
+                return kv_pb2.PutResponse(ok=False, error="not leader")
+
+            deadline = time.time() + 3.0
+            while time.time() < deadline:
+                if getattr(self.raft, "commit_index", 0) >= idx:
+                    break
+                time.sleep(0.05)
+            if getattr(self.raft, "commit_index", 0) < idx:
+                return kv_pb2.PutResponse(ok=False, error="commit timeout")
+
+            return kv_pb2.PutResponse(ok=True, version=version)
+        except Exception as exc:
+            return kv_pb2.PutResponse(ok=False, error=str(exc))
 
     def Get(self, request, context):
         key = request.key

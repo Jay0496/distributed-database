@@ -16,7 +16,14 @@ class GrpcTransport:
         self.peers = list(peers or [])
         self._channels = {}
         self._stubs = {}
+        # Map node ids (e.g. "node3") and addresses to peer addresses so
+        # callers that hold node ids (repair sweep, startup sync) resolve
+        # correctly. Docker service names match the part before ":".
+        self.peer_id_map = {}
         for addr in self.peers:
+            host = addr.split(":")[0] if ":" in addr else addr
+            self.peer_id_map[addr] = addr
+            self.peer_id_map[host] = addr
             try:
                 ch = grpc.insecure_channel(addr)
                 self._channels[addr] = ch
@@ -38,10 +45,18 @@ class GrpcTransport:
         return [("authorization", f"Bearer {token}")]
 
     def _stub(self, peer_id):
+        # Resolve node ids such as "node3" to "node3:50053".
+        resolved = self.peer_id_map.get(peer_id)
+        if resolved is None:
+            resolved = self.peer_id_map.get(str(peer_id))
+        if resolved is not None:
+            peer_id = resolved
         if peer_id in self._stubs:
             return self._stubs.get(peer_id)
         # allow passing host:port directly
         if peer_id not in self._channels:
+            if ":" not in str(peer_id):
+                return None
             try:
                 ch = grpc.insecure_channel(peer_id)
                 self._channels[peer_id] = ch

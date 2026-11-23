@@ -91,7 +91,7 @@ Detailed design docs with Mermaid diagrams live in [`docs/`](docs/):
 - [Failure recovery](docs/FAILURE_RECOVERY.md)
 - [Routing](docs/ROUTING.md) / [Data model](docs/DATA_MODEL.md)
 - [Security](docs/SECURITY.md) / [API](docs/API.md)
-- [Testing](docs/TESTING.md) / [Demo](docs/DEMO.md)
+- [Testing](docs/TESTING.md) / [Benchmarks](docs/BENCHMARKS.md) / [Demo](docs/DEMO.md)
 
 ## Logs
 
@@ -128,6 +128,6 @@ The repository stays small: source + tests + proto only, no large binaries.
   writes may briefly fail and should be retried.
 - Repair sweep runs on a fixed interval (default 10s); very recent writes
   may not be repaired instantly.
-- No authentication/TLS; intended for trusted local/demo environments.
+- Shared-token auth via gRPC metadata (`TOKEN`); no TLS, JWT, or per-user roles. Intended for trusted local/demo environments.
 - Node healthchecks are TCP-only and do not validate application readiness
   beyond port binding.

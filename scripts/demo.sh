@@ -35,4 +35,3 @@ echo "[10] Tear down"
 docker compose down -v
 
 echo "=== Demo complete ==="
-EOF

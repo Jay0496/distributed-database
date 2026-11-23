@@ -27,6 +27,9 @@ bash scripts/smoke.sh
 
 # Labeled demo
 bash scripts/demo.sh
+
+# Minimal put/get benchmark (p50/p95 + throughput)
+python scripts/bench.py --keys 50 --value-size 1024
 ```
 
 ## Current results
@@ -59,6 +62,7 @@ bash scripts/demo.sh
 | Auth | `test_auth.py` (missing/wrong/correct/disabled) |
 | Gateway | `test_gateway_leader.py` (failover rediscovery) |
 | Submodules | `test_raft_submodules.py` (mixins importable) |
+| Transport mapping | `test_transport_mapping.py` (node id → peer address) |
 
 ## Evaluation talking points
 
@@ -75,5 +79,5 @@ bash scripts/demo.sh
 ## Known test gaps
 
 - No chaos/failure-injection suite beyond `scripts/smoke.sh`.
-- No benchmark suite in-repo (bench harness is out of MVP scope).
+- Benchmark harness is minimal and sequential; see [`BENCHMARKS.md`](BENCHMARKS.md).
 - Coverage gate applies to `node/` and `gateway/` (generated `gen/` excluded).
